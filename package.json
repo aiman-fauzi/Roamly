@@ -4,8 +4,8 @@
     "private": true,
     "scripts": {
         "dev": "next dev",
-        "build": "next build",
-		"postinstall": "prisma generate",
+        "build": "prisma generate --schema=src/db/schema.prisma && next build",
+		"postinstall": "prisma generate --schema=src/db/schema.prisma",
         "start": "next start",
         "lint": "eslint src --ext .ts,.tsx",
         "typecheck": "tsc --noEmit",
