@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client'
+import { Decimal } from '@prisma/client/runtime/library'
 
 import { prisma } from '@/db/client'
 
@@ -108,17 +108,17 @@ export async function resolveExchangeRate({
         },
       },
       update: {
-        rate: new Prisma.Decimal(rate),
-        source: RATE_SOURCE,
-        fetchedAt,
-      },
-      create: {
-        baseCurrency: base,
-        quoteCurrency: quote,
-        rate: new Prisma.Decimal(rate),
-        source: RATE_SOURCE,
-        fetchedAt,
-      },
+		  rate: new Decimal(rate),
+		  source: RATE_SOURCE,
+		  fetchedAt,
+	  },
+	  create: {
+		  baseCurrency: base,
+		  quoteCurrency: quote,
+		  rate: new Decimal(rate),
+		  source: RATE_SOURCE,
+		  fetchedAt,
+	  },
     })
 
     return {
