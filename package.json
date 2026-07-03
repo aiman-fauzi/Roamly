@@ -1,0 +1,60 @@
+{
+    "name": "roamly",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "eslint src --ext .ts,.tsx",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest --run",
+        "test:watch": "vitest",
+        "test:ui": "vitest --ui",
+        "db:generate": "prisma generate --schema=src/db/schema.prisma",
+        "db:migrate": "prisma migrate dev --schema=src/db/schema.prisma",
+        "db:push": "prisma db push --schema=src/db/schema.prisma",
+        "db:studio": "prisma studio",
+        "db:seed": "tsx src/db/seed.ts"
+    },
+    "dependencies": {
+        "@google/genai": "^2.10.0",
+        "@prisma/client": "5.14.0",
+        "@supabase/ssr": "0.12.0",
+        "@supabase/supabase-js": "2.110.0",
+        "clsx": "2.1.1",
+        "next": "16.2.9",
+        "react": "18.3.1",
+        "react-dom": "18.3.1",
+        "tailwind-merge": "2.3.0",
+        "zod": "3.23.8"
+    },
+    "devDependencies": {
+        "@testing-library/jest-dom": "6.4.6",
+        "@testing-library/react": "16.0.0",
+        "@testing-library/user-event": "14.5.2",
+        "@types/node": "20.14.9",
+        "@types/react": "18.3.3",
+        "@types/react-dom": "18.3.0",
+        "@typescript-eslint/eslint-plugin": "7.15.0",
+        "@typescript-eslint/parser": "7.15.0",
+        "@vitejs/plugin-react": "4.3.1",
+        "@vitest/ui": "1.6.0",
+        "autoprefixer": "10.4.19",
+        "eslint": "8.57.0",
+        "eslint-plugin-import": "2.29.1",
+        "fast-check": "3.19.0",
+        "jsdom": "24.1.0",
+        "postcss": "8.5.16",
+        "prettier": "3.3.2",
+        "prettier-plugin-tailwindcss": "0.6.5",
+        "prisma": "5.14.0",
+        "tailwindcss": "3.4.4",
+        "tsx": "4.16.2",
+        "typescript": "5.5.3",
+        "vitest": "1.6.0"
+    },
+    "overrides": {
+        "postcss": "8.5.16"
+    }
+}
