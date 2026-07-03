@@ -1,7 +1,7 @@
 import { TripStatus } from '@prisma/client'
 
 import { prisma } from '@/db/client'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import {
   isProfileComplete,
   profileUpdateSchema,
@@ -11,7 +11,31 @@ import {
 import type { Profile, ProfileSummary, ProfileUpdateInput } from '@/types/profile'
 import { extractEmailPrefix } from '@/utils/emailUtils'
 
-const AVATAR_BUCKET = 'avatars'
+const AVATAR_BUCKET = process.env.SUPABASE_AVATAR_BUCKET ?? 'avatars'
+const AVATAR_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+
+async function ensureAvatarBucket() {
+  const supabase = createAdminClient()
+  const { error } = await supabase.storage.getBucket(AVATAR_BUCKET)
+
+  if (!error) return supabase
+
+  if (!error.message.toLowerCase().includes('not found')) {
+    throw new ServiceError('AVATAR_BUCKET_UNAVAILABLE', `Avatar bucket unavailable: ${error.message}`)
+  }
+
+  const { error: createError } = await supabase.storage.createBucket(AVATAR_BUCKET, {
+    public: true,
+    fileSizeLimit: '5MB',
+    allowedMimeTypes: AVATAR_ALLOWED_MIME_TYPES,
+  })
+
+  if (createError && !createError.message.toLowerCase().includes('already exists')) {
+    throw new ServiceError('AVATAR_BUCKET_CREATE_FAILED', `Avatar bucket setup failed: ${createError.message}`)
+  }
+
+  return supabase
+}
 
 export class ServiceError extends Error {
   constructor(
@@ -117,7 +141,7 @@ export async function getProfileSummary(userId: string): Promise<ProfileSummary>
 }
 
 export async function updateAvatar(userId: string, file: File): Promise<Profile> {
-  const supabase = await createClient()
+  const supabase = await ensureAvatarBucket()
   const ext = file.name.split('.').pop() ?? 'jpg'
   const storagePath = `${userId}/avatar-${Date.now()}.${ext}`
 

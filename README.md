@@ -28,6 +28,8 @@ DIRECT_URL="postgresql://..."
 NEXT_PUBLIC_SUPABASE_URL="https://..."
 NEXT_PUBLIC_SUPABASE_ANON_KEY="..."
 SUPABASE_SERVICE_ROLE_KEY="..."
+SUPABASE_AVATAR_BUCKET="avatars"
+NEXT_PUBLIC_SITE_URL="http://localhost:3000"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ```
 

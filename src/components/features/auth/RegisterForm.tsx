@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { ROUTES } from '@/constants/routes'
+import { getAuthCallbackUrl } from '@/lib/siteUrl'
 import { createClient } from '@/lib/supabase/client'
 import { validatePassword } from '@/lib/validations/passwordValidation'
 
@@ -32,7 +33,13 @@ export function RegisterForm() {
     setIsLoading(true)
     try {
       const supabase = createClient()
-      const { error } = await supabase.auth.signUp({ email, password })
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: getAuthCallbackUrl(),
+        },
+      })
 
       if (error) {
         if (error.message.toLowerCase().includes('already registered') ||

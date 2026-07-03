@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 
 import { ToastProvider } from '@/components/ui/Toast'
+import { getSiteUrl } from '@/lib/siteUrl'
 
 import './globals.css'
 
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
   },
   description:
     'Roamly generates personalised travel itineraries based on your preferences. Plan less, explore more.',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
+  metadataBase: new URL(getSiteUrl()),
 }
 
 export default function RootLayout({

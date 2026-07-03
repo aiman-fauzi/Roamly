@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { ROUTES } from '@/constants/routes'
+import { getAuthCallbackUrl } from '@/lib/siteUrl'
 import { createClient } from '@/lib/supabase/client'
 
 export function LoginForm() {
@@ -53,7 +54,7 @@ export function LoginForm() {
       const { error: authError } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}${ROUTES.AUTH_CALLBACK}`,
+          redirectTo: getAuthCallbackUrl(),
         },
       })
       if (authError) {
