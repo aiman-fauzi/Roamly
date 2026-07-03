@@ -5,6 +5,7 @@
     "scripts": {
         "dev": "next dev",
         "build": "next build",
+		"postinstall": "prisma generate",
         "start": "next start",
         "lint": "eslint src --ext .ts,.tsx",
         "typecheck": "tsc --noEmit",
@@ -17,6 +18,10 @@
         "db:studio": "prisma studio",
         "db:seed": "tsx src/db/seed.ts"
     },
+	"prisma": {
+        "schema": "src/db/schema.prisma"
+    },
+	
     "dependencies": {
         "@google/genai": "^2.10.0",
         "@prisma/client": "5.14.0",
