@@ -44,7 +44,7 @@ export function Slider({
         <label htmlFor={inputId} className="text-sm font-medium text-neutral-900">
           {label}
         </label>
-        <span className="rounded-md bg-primary-50 px-3 py-1 text-sm font-semibold text-primary-700">
+        <span className="rounded-full bg-atlas-50 px-3 py-1 text-sm font-semibold text-atlas-700">
           {formatValue(displayValue)}
         </span>
       </div>
@@ -56,7 +56,7 @@ export function Slider({
         step={step}
         value={displayValue}
         onChange={handleChange}
-        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-neutral-200 accent-primary-500 transition-ui focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-neutral-200 accent-atlas-500 transition-ui focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
       />
     </div>
   )

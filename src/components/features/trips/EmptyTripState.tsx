@@ -4,10 +4,11 @@ import { ROUTES } from '@/constants/routes'
 
 export function EmptyTripState() {
   return (
-    <div className="rounded-card bg-white p-8 text-center shadow-card sm:p-10">
+    <div className="surface-panel overflow-hidden p-8 text-center sm:p-10">
+      <div className="route-line mx-auto h-24 max-w-sm rounded-card bg-neutral-50" aria-hidden="true" />
       <div
         aria-hidden="true"
-        className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary-50 text-3xl text-primary-700"
+        className="mx-auto -mt-8 flex h-16 w-16 items-center justify-center rounded-full bg-neutral-900 text-3xl font-semibold text-white shadow-card"
       >
         +
       </div>
@@ -17,7 +18,7 @@ export function EmptyTripState() {
       </p>
       <Link
         href={ROUTES.NEW_TRIP}
-        className="mt-6 inline-flex min-h-11 items-center justify-center rounded-card bg-primary-500 px-5 py-2.5 text-base font-semibold text-white shadow-card transition-ui hover:bg-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+        className="mt-6 inline-flex min-h-11 items-center justify-center rounded-full bg-neutral-900 px-5 py-2.5 text-base font-semibold text-white shadow-card transition-ui hover:-translate-y-0.5 hover:bg-primary-700 hover:shadow-card-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
       >
         Plan my first trip
       </Link>

@@ -116,14 +116,21 @@ export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="rounded-card bg-white p-5 shadow-card sm:p-8">
-        <ProgressBar currentStep={currentStep} />
-        <p className="mt-3 text-sm font-medium text-neutral-700" aria-live="polite">
-          Saved locally
-        </p>
+    <div className="mx-auto max-w-4xl">
+      <div className="surface-panel overflow-hidden p-5 sm:p-8">
+        <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-wide text-atlas-700">Trip questionnaire</p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">Shape your itinerary</h1>
+          </div>
+          <p className="text-sm font-medium text-neutral-700" aria-live="polite">
+            Saved locally
+          </p>
+        </div>
 
-        <div className="mt-8 min-h-[360px]">
+        <ProgressBar currentStep={currentStep} />
+
+        <div className="mt-8 min-h-[360px] rounded-[1.25rem] border border-neutral-200/70 bg-white/60 p-4 sm:p-6">
           {currentStep === 1 && <DestinationStep {...stepProps} />}
           {currentStep === 2 && <BudgetStep {...stepProps} />}
           {currentStep === 3 && <DurationStep {...stepProps} />}
@@ -136,21 +143,21 @@ export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
         </div>
 
         {submitError && (
-          <p role="alert" className="mt-4 rounded-md bg-red-50 p-3 text-sm text-error-500">
+          <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-error-500">
             {submitError}
           </p>
         )}
 
         {isSubmitting && (
-          <div className="mt-4 rounded-card bg-primary-50 p-4 text-sm text-primary-700" aria-live="polite">
+          <div className="mt-4 rounded-card border border-atlas-100 bg-atlas-50 p-4 text-sm text-atlas-700" aria-live="polite">
             <div className="flex items-center gap-3 font-semibold">
               <Spinner size="sm" />
               Planning your journey...
             </div>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {generationSteps.map((step) => (
-                <li key={step} className="flex items-center gap-2 rounded-md bg-white/70 px-3 py-2">
-                  <span aria-hidden="true" className="h-2 w-2 rounded-full bg-primary-500" />
+                <li key={step} className="flex items-center gap-2 rounded-full bg-white/75 px-3 py-2">
+                  <span aria-hidden="true" className="h-2 w-2 rounded-full bg-atlas-500" />
                   {step}
                 </li>
               ))}

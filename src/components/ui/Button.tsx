@@ -22,19 +22,21 @@ export function Button({
   ...props
 }: ButtonProps) {
   const base =
-    'inline-flex items-center justify-center font-semibold rounded-card transition-ui focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50'
+    'inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-ui focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.98]'
 
   const variants = {
-    default: 'bg-primary-500 text-white hover:bg-primary-600 shadow-card',
-    outline: 'border border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50 shadow-card',
-    ghost: 'text-neutral-700 hover:bg-neutral-100',
-    destructive: 'bg-error-500 text-white hover:opacity-90 shadow-card',
+    default:
+      'bg-neutral-900 text-white shadow-card hover:-translate-y-0.5 hover:bg-primary-700 hover:shadow-card-hover',
+    outline:
+      'border border-neutral-200/90 bg-white/90 text-neutral-900 shadow-card backdrop-blur hover:-translate-y-0.5 hover:border-primary-100 hover:bg-white hover:shadow-card-hover',
+    ghost: 'text-neutral-700 hover:bg-neutral-100/80 hover:text-neutral-900',
+    destructive: 'bg-error-500 text-white shadow-card hover:-translate-y-0.5 hover:opacity-90',
   }
 
   const sizes = {
-    sm: 'px-3 py-1.5 text-sm',
-    md: 'px-5 py-2.5 text-base',
-    lg: 'px-7 py-3 text-lg',
+    sm: 'min-h-9 px-3.5 py-1.5 text-sm',
+    md: 'min-h-11 px-5 py-2.5 text-base',
+    lg: 'min-h-12 px-7 py-3 text-lg',
   }
 
   return (

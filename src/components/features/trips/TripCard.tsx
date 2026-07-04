@@ -34,7 +34,9 @@ export function TripCard({ trip, onDelete }: TripCardProps) {
   const [showConfirm, setShowConfirm] = useState(false)
 
   const destination = trip.preferenceSet?.destination ?? 'Destination pending'
-  const duration = trip.preferenceSet?.durationDays ? `${trip.preferenceSet.durationDays} days` : 'Not set'
+  const duration = trip.preferenceSet?.durationDays
+    ? `${trip.preferenceSet.durationDays} days`
+    : 'Not set'
   const budget = trip.preferenceSet?.budget ? formatCurrency(trip.preferenceSet.budget) : 'Not set'
   const href =
     trip.status === 'COMPLETE' ? ROUTES.tripItinerary(trip.id) : ROUTES.tripQuestionnaire(trip.id)
@@ -57,18 +59,20 @@ export function TripCard({ trip, onDelete }: TripCardProps) {
   }
 
   return (
-    <article className="rounded-card bg-white shadow-card transition-ui hover:-translate-y-0.5 hover:shadow-card-hover focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2">
+    <article className="surface-panel transition-ui overflow-hidden focus-within:ring-2 focus-within:ring-primary-500 focus-within:ring-offset-2 hover:-translate-y-0.5 hover:shadow-card-hover">
       <div className="flex flex-col gap-4 p-card-pad sm:flex-row sm:items-start sm:justify-between">
         <Link href={href} className="min-w-0 flex-1 rounded-md focus-visible:outline-none">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="min-w-0 truncate text-xl font-semibold text-neutral-900">{destination}</h2>
-            <span className="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-semibold uppercase text-primary-700">
+            <h2 className="min-w-0 truncate text-xl font-semibold text-neutral-900">
+              {destination}
+            </h2>
+            <span className="rounded-full bg-atlas-50 px-2.5 py-1 text-xs font-semibold uppercase text-atlas-700">
               {trip.status === 'COMPLETE' ? 'Complete' : 'Draft'}
             </span>
           </div>
           <p className="mt-1 truncate text-sm font-medium text-neutral-700">{trip.title}</p>
 
-          <dl className="mt-4 grid gap-3 text-sm text-neutral-700 sm:grid-cols-4">
+          <dl className="mt-5 grid gap-3 text-sm text-neutral-700 sm:grid-cols-4">
             <div>
               <dt className="font-medium text-neutral-900">Budget</dt>
               <dd>{budget}</dd>
@@ -89,7 +93,10 @@ export function TripCard({ trip, onDelete }: TripCardProps) {
 
           <div className="mt-4" aria-label={`Trip progress ${progress}%`}>
             <div className="h-2 overflow-hidden rounded-full bg-neutral-100">
-              <div className="h-full rounded-full bg-primary-500 transition-ui" style={{ width: `${progress}%` }} />
+              <div
+                className="transition-ui h-full rounded-full bg-atlas-500"
+                style={{ width: `${progress}%` }}
+              />
             </div>
           </div>
         </Link>
@@ -118,4 +125,3 @@ export function TripCard({ trip, onDelete }: TripCardProps) {
     </article>
   )
 }
-

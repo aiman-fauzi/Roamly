@@ -57,7 +57,10 @@ export function ProfileForm({ mode }: ProfileFormProps) {
 
   const title = mode === 'setup' ? 'Complete your travel profile' : 'Travel profile'
   const buttonLabel = mode === 'setup' ? 'Save and continue' : 'Save profile'
-  const selectedInterests = useMemo(() => new Set(form.travelInterests ?? []), [form.travelInterests])
+  const selectedInterests = useMemo(
+    () => new Set(form.travelInterests ?? []),
+    [form.travelInterests]
+  )
 
   function updateField<K extends keyof ProfileUpdateInput>(key: K, value: ProfileUpdateInput[K]) {
     setForm((previous) => ({ ...previous, [key]: value }))
@@ -105,7 +108,10 @@ export function ProfileForm({ mode }: ProfileFormProps) {
     try {
       await updateProfile(parsed.data)
       setSuccess(true)
-      toast.success('Profile updated.', mode === 'setup' ? 'You can start planning now.' : 'Your travel preferences were saved.')
+      toast.success(
+        'Profile updated.',
+        mode === 'setup' ? 'You can start planning now.' : 'Your travel preferences were saved.'
+      )
       if (mode === 'setup') {
         router.replace(ROUTES.DASHBOARD)
         router.refresh()
@@ -123,7 +129,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
 
   if (error) {
     return (
-      <div className="rounded-card bg-white p-card-pad shadow-card">
+      <div className="surface-panel p-card-pad">
         <p role="alert" className="text-sm text-error-500">
           {error}
         </p>
@@ -132,9 +138,9 @@ export function ProfileForm({ mode }: ProfileFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 rounded-card bg-white p-card-pad shadow-card">
+    <form onSubmit={handleSubmit} className="surface-panel space-y-6 p-5 sm:p-7">
       <div>
-        <h1 className="text-2xl font-bold text-neutral-900">{title}</h1>
+        <h1 className="text-3xl font-bold tracking-tight text-neutral-900">{title}</h1>
         <p className="mt-2 text-sm text-neutral-700">
           These details help Roamly plan with the right currency, language, and travel style.
         </p>
@@ -164,7 +170,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
             <select
               value={form.country}
               onChange={(event) => handleCountryChange(event.target.value)}
-              className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2.5 text-base text-neutral-900 transition-ui focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="transition-ui w-full rounded-xl border border-neutral-200/90 bg-white/90 px-4 py-3 text-base text-neutral-900 focus:border-primary-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-primary-100"
               required
             >
               <option value="">Select country</option>
@@ -199,7 +205,7 @@ export function ProfileForm({ mode }: ProfileFormProps) {
             <select
               value={form.preferredLanguage ?? ''}
               onChange={(event) => updateField('preferredLanguage', event.target.value || null)}
-              className="w-full rounded-md border border-neutral-200 bg-white px-3 py-2.5 text-base text-neutral-900 transition-ui focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="transition-ui w-full rounded-xl border border-neutral-200/90 bg-white/90 px-4 py-3 text-base text-neutral-900 focus:border-primary-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-primary-100"
             >
               <option value="">No preference</option>
               {LANGUAGE_OPTIONS.map((language) => (
@@ -227,12 +233,12 @@ export function ProfileForm({ mode }: ProfileFormProps) {
       </div>
 
       {formError && (
-        <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-error-500">
+        <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-error-500">
           {formError}
         </p>
       )}
       {success && mode === 'edit' && (
-        <p role="status" className="rounded-md bg-green-50 p-3 text-sm text-success-500">
+        <p role="status" className="rounded-xl bg-green-50 p-3 text-sm text-success-500">
           Profile updated successfully.
         </p>
       )}
@@ -245,6 +251,3 @@ export function ProfileForm({ mode }: ProfileFormProps) {
     </form>
   )
 }
-
-
-

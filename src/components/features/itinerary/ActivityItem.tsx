@@ -7,10 +7,10 @@ interface ActivityItemProps {
 
 export function ActivityItem({ activity }: ActivityItemProps) {
   return (
-    <li className="rounded-card border border-neutral-200 bg-white p-4 shadow-card">
+    <li className="rounded-card border border-neutral-200/80 bg-white/90 p-4 shadow-card backdrop-blur">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm font-semibold text-primary-700">{activity.time}</p>
+          <p className="text-sm font-semibold text-atlas-700">{activity.time}</p>
           <h3 className="font-semibold text-neutral-900">{activity.title}</h3>
         </div>
         <div className="text-left sm:text-right">

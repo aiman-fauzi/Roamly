@@ -1,6 +1,5 @@
 'use client'
 
-
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
@@ -69,16 +68,20 @@ export function LoginForm() {
   }
 
   return (
-    <div className="rounded-card bg-white p-8 shadow-card">
-      <div className="mb-6 text-center">        <h1 className="mt-2 text-2xl font-bold text-neutral-900">Welcome back</h1>
-        <p className="mt-1 text-sm text-neutral-700">Sign in to your Roamly account</p>
+    <div className="surface-panel p-7 sm:p-8">
+      <div className="mb-7 text-center">
+        <p className="text-sm font-semibold uppercase tracking-wide text-atlas-700">Welcome back</p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-900">Welcome back</h1>
+        <p className="mt-1 text-sm text-neutral-700">
+          Continue planning with your saved profile and trips
+        </p>
       </div>
 
       {/* Google OAuth */}
       <Button
         type="button"
         variant="outline"
-        className="mb-4 w-full gap-2"
+        className="mb-4 w-full"
         onClick={handleGoogleLogin}
         isLoading={isGoogleLoading}
       >
@@ -160,4 +163,3 @@ export function LoginForm() {
     </div>
   )
 }
-

@@ -4,40 +4,67 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 42 31% 97%;
+    --foreground: 45 12% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --primary: 239 84% 67%;
+    --card-foreground: 45 12% 8%;
+    --primary: 231 68% 62%;
     --primary-foreground: 0 0% 100%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 239 84% 67%;
-    --radius: 0.75rem;
+    --muted: 42 22% 93%;
+    --muted-foreground: 40 8% 35%;
+    --border: 39 18% 86%;
+    --input: 39 18% 86%;
+    --ring: 231 68% 62%;
+    --radius: 1rem;
   }
 
   * {
     @apply border-border;
   }
 
-  body {
-    @apply bg-neutral-50 text-neutral-900 font-sans antialiased;
-    font-size: 1rem; /* 16px minimum on mobile */
-    line-height: 1.5;
+  html {
+    scroll-behavior: smooth;
   }
 
-  /* Focus ring — visible for keyboard navigation (WCAG 2.1 AA) */
+  body {
+    @apply bg-neutral-50 text-neutral-900 font-sans antialiased;
+    min-height: 100vh;
+    font-size: 1rem;
+    line-height: 1.5;
+    text-rendering: geometricPrecision;
+  }
+
+  body::selection {
+    @apply bg-atlas-100 text-neutral-900;
+  }
+
   :focus-visible {
-    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-neutral-50;
+  }
+}
+
+@layer components {
+  .surface-panel {
+    @apply rounded-card border border-white/70 bg-white/80 shadow-card backdrop-blur-xl;
+  }
+
+  .surface-subtle {
+    @apply rounded-card border border-neutral-200/80 bg-neutral-50/80;
+  }
+
+  .route-line {
+    background-image: radial-gradient(circle, rgba(67, 87, 200, 0.58) 1.4px, transparent 1.6px);
+    background-size: 18px 18px;
   }
 }
 
 @layer utilities {
-  /* Smooth transitions on interactive elements (150–300ms per Req 11.3) */
   .transition-ui {
-    @apply transition-all duration-200 ease-in-out;
+    @apply transition-all duration-200 ease-out;
+  }
+
+  .text-balance {
+    text-wrap: balance;
   }
 }
 

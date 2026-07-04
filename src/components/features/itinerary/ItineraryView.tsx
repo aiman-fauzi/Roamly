@@ -85,7 +85,7 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-3xl rounded-card bg-white p-6 shadow-card" aria-live="polite">
+      <div className="surface-panel mx-auto max-w-3xl p-6" aria-live="polite">
         <div className="flex items-center gap-3">
           <Spinner />
           <div>
@@ -106,7 +106,7 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
 
   if (error) {
     return (
-      <div className="rounded-card bg-white p-6 shadow-card">
+      <div className="surface-panel p-6">
         <h1 className="text-heading text-neutral-900">Itinerary unavailable</h1>
         <p role="alert" className="mt-3 text-neutral-700">
           {error}
@@ -120,8 +120,8 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
 
   if (hasLegacyItinerary) {
     return (
-      <div className="rounded-card bg-white p-6 shadow-card">
-        <p className="text-sm font-semibold uppercase text-primary-700">Update available</p>
+      <div className="surface-panel p-6">
+        <p className="text-sm font-semibold uppercase text-atlas-700">Update available</p>
         <h1 className="mt-2 text-heading text-neutral-900">Regenerate this itinerary</h1>
         <p className="mt-3 text-neutral-700">
           This itinerary was generated with an older format. Regenerate it to see the timeline,
@@ -136,16 +136,17 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
 
   if (!itinerary) {
     return (
-      <div className="rounded-card bg-white p-8 text-center shadow-card sm:p-10">
+      <div className="surface-panel p-8 text-center sm:p-10">
         <div
           aria-hidden="true"
-          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary-50 text-2xl font-bold text-primary-700"
+          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-atlas-50 text-2xl font-bold text-atlas-700"
         >
           AI
         </div>
         <h1 className="mt-5 text-heading text-neutral-900">No itinerary yet</h1>
         <p className="mx-auto mt-3 max-w-md text-neutral-700">
-          Finish the questionnaire and Roamly will generate a timeline, costs, transport notes, and budget summary.
+          Finish the questionnaire and Roamly will generate a timeline, costs, transport notes, and
+          budget summary.
         </p>
         <Button className="mt-6" onClick={() => router.push(ROUTES.tripQuestionnaire(tripId))}>
           Continue questionnaire

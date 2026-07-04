@@ -17,7 +17,7 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
   return (
     <header className="space-y-5">
       <div>
-        <div className="text-sm font-semibold uppercase tracking-wide text-primary-700">
+        <div className="text-sm font-semibold uppercase tracking-wide text-atlas-700">
           {destination ?? 'Your trip'}
         </div>
         <h1 className="mt-2 text-3xl font-bold leading-tight text-neutral-900 sm:text-4xl">
@@ -29,7 +29,7 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-card bg-white p-4 shadow-card">
+        <div className="surface-panel p-4">
           <p className="text-sm font-medium text-neutral-700">Estimated total</p>
           <p className="mt-1 text-xl font-bold text-neutral-900">
             {formatCurrency(budget.estimatedTotalUserCurrency, itinerary.currencyUser)}
@@ -38,7 +38,7 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
             {formatCurrency(budget.estimatedTotalLocal, itinerary.currencyLocal)} local
           </p>
         </div>
-        <div className="rounded-card bg-white p-4 shadow-card">
+        <div className="surface-panel p-4">
           <p className="text-sm font-medium text-neutral-700">{budgetLabel}</p>
           <p className={budget.isBudgetExceeded ? 'mt-1 text-xl font-bold text-error-500' : 'mt-1 text-xl font-bold text-success-500'}>
             {formatCurrency(budgetValue, itinerary.currencyUser)}
@@ -47,7 +47,7 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
             Budget {formatCurrency(budget.totalBudgetUserCurrency, itinerary.currencyUser)}
           </p>
         </div>
-        <div className="rounded-card bg-white p-4 shadow-card">
+        <div className="surface-panel p-4">
           <p className="text-sm font-medium text-neutral-700">Exchange rate</p>
           <p className="mt-1 text-sm font-semibold text-neutral-900">
             1 {itinerary.exchangeRate.baseCurrency} ={' '}

@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { useState } from 'react'
 
-
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { ROUTES } from '@/constants/routes'
@@ -42,8 +41,10 @@ export function RegisterForm() {
       })
 
       if (error) {
-        if (error.message.toLowerCase().includes('already registered') ||
-            error.message.toLowerCase().includes('already been registered')) {
+        if (
+          error.message.toLowerCase().includes('already registered') ||
+          error.message.toLowerCase().includes('already been registered')
+        ) {
           setErrors({ email: 'This email is already in use.' })
         } else {
           setErrors({ form: error.message })
@@ -59,11 +60,11 @@ export function RegisterForm() {
 
   if (success) {
     return (
-      <div className="rounded-card bg-white p-8 shadow-card text-center">
+      <div className="surface-panel p-8 text-center">
         <h2 className="mb-2 text-xl font-semibold text-neutral-900">Check your email</h2>
         <p className="text-neutral-700">
-          We sent a verification link to <strong>{email}</strong>. Click the link to activate
-          your account.
+          We sent a verification link to <strong>{email}</strong>. Click the link to activate your
+          account.
         </p>
         <Link
           href={ROUTES.LOGIN}
@@ -76,9 +77,17 @@ export function RegisterForm() {
   }
 
   return (
-    <div className="rounded-card bg-white p-8 shadow-card">
-      <div className="mb-6 text-center">        <h1 className="mt-2 text-2xl font-bold text-neutral-900">Create your account</h1>
-        <p className="mt-1 text-sm text-neutral-700">Start planning smarter with Roamly</p>
+    <div className="surface-panel p-7 sm:p-8">
+      <div className="mb-7 text-center">
+        <p className="text-sm font-semibold uppercase tracking-wide text-atlas-700">
+          Start planning
+        </p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-900">
+          Create your account
+        </h1>
+        <p className="mt-1 text-sm text-neutral-700">
+          Build your profile once, then generate smarter travel plans
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-4">
@@ -103,7 +112,7 @@ export function RegisterForm() {
             placeholder="Min. 8 characters"
             autoComplete="new-password"
             required
-            hint="8–128 characters"
+            hint="8-128 characters"
           />
           <button
             type="button"
@@ -135,4 +144,3 @@ export function RegisterForm() {
     </div>
   )
 }
-

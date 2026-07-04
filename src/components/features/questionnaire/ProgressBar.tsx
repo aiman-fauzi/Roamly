@@ -21,10 +21,10 @@ export function ProgressBar({ currentStep }: ProgressBarProps) {
         aria-valuemax={100}
         aria-valuenow={percent}
         aria-label="Questionnaire completion"
-        className="h-2 overflow-hidden rounded-full bg-neutral-200"
+        className="h-2.5 overflow-hidden rounded-full bg-neutral-200/90"
       >
         <div
-          className="h-full rounded-full bg-primary-500 transition-ui"
+          className="transition-ui h-full rounded-full bg-atlas-500"
           style={{ width: `${percent}%` }}
         />
       </div>

@@ -36,13 +36,13 @@ export function Stepper({ label, value, min, max, onChange, className }: Stepper
       <label htmlFor={inputId} className="text-sm font-medium text-neutral-900">
         {label}
       </label>
-      <div className="grid grid-cols-[44px_1fr_44px] items-center overflow-hidden rounded-card border border-neutral-200 bg-white shadow-card">
+      <div className="grid grid-cols-[44px_1fr_44px] items-center overflow-hidden rounded-full border border-neutral-200/90 bg-white/90 shadow-card backdrop-blur">
         <button
           type="button"
           aria-label={`Decrease ${label}`}
           onClick={() => update(safeValue - 1)}
           disabled={safeValue <= min}
-          className="flex h-11 items-center justify-center text-xl font-semibold text-neutral-700 transition-ui hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="transition-ui flex h-11 items-center justify-center text-xl font-semibold text-neutral-700 hover:bg-atlas-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
           -
         </button>
@@ -61,7 +61,7 @@ export function Stepper({ label, value, min, max, onChange, className }: Stepper
           aria-label={`Increase ${label}`}
           onClick={() => update(safeValue + 1)}
           disabled={safeValue >= max}
-          className="flex h-11 items-center justify-center text-xl font-semibold text-neutral-700 transition-ui hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40"
+          className="transition-ui flex h-11 items-center justify-center text-xl font-semibold text-neutral-700 hover:bg-atlas-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
           +
         </button>

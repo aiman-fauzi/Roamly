@@ -12,7 +12,7 @@ export function ProfileCard() {
 
   if (error) {
     return (
-      <div className="rounded-card bg-white p-card-pad shadow-card">
+      <div className="surface-panel p-card-pad">
         <p role="alert" className="text-sm text-error-500">
           {error}
         </p>
@@ -23,7 +23,7 @@ export function ProfileCard() {
   return (
     <div className="space-y-6">
       {summary && (
-        <section className="rounded-card bg-white p-card-pad shadow-card">
+        <section className="surface-panel p-card-pad">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <p className="text-sm font-medium text-neutral-700">Email</p>

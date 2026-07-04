@@ -7,7 +7,7 @@ interface PageWrapperProps {
 
 export function PageWrapper({ children, className }: PageWrapperProps) {
   return (
-    <main className={cn('mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8', className)}>
+    <main className={cn('mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8', className)}>
       {children}
     </main>
   )

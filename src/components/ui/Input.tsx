@@ -17,10 +17,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="flex flex-col gap-1.5">
         {label && (
-          <label
-            htmlFor={inputId}
-            className="text-sm font-medium text-neutral-900"
-          >
+          <label htmlFor={inputId} className="text-sm font-semibold text-neutral-900">
             {label}
           </label>
         )}
@@ -30,15 +27,15 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           aria-describedby={error ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined}
           aria-invalid={error ? 'true' : undefined}
           className={cn(
-            'w-full rounded-md border border-neutral-200 bg-white px-3 py-2.5 text-base text-neutral-900 placeholder:text-neutral-400',
-            'transition-ui focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-0',
-            error && 'border-error-500 focus:ring-error-500',
+            'w-full rounded-xl border border-neutral-200/90 bg-white/90 px-4 py-3 text-base text-neutral-900 shadow-[0_1px_0_rgba(255,255,255,0.8)_inset] placeholder:text-neutral-400',
+            'transition-ui focus:border-primary-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-primary-100',
+            error && 'border-error-500 focus:ring-red-100',
             className
           )}
           {...props}
         />
         {error && (
-          <p id={`${inputId}-error`} role="alert" className="text-sm text-error-500">
+          <p id={`${inputId}-error`} role="alert" className="text-sm font-medium text-error-500">
             {error}
           </p>
         )}
