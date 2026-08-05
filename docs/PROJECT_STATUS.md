@@ -1160,11 +1160,11 @@ Previous generation shape:
 Current generation shape:
 
 - Default model is `gemini-2.5-flash`.
-- Provider timeout is 30000ms.
+- Provider timeout is capped at 30000ms, even if a stale environment value is higher.
 - Retry budget is still one bounded retry for timeout, 429 with Retry-After, and transient 5xx only.
 - Temperature is 0.2.
 - Thinking is disabled/minimized with `GEMINI_THINKING_BUDGET=0` and `includeThoughts=false`.
-- Output is capped with `GEMINI_MAX_OUTPUT_TOKENS=1800`.
+- Output defaults to `GEMINI_MAX_OUTPUT_TOKENS=1800` and is capped at 2000 tokens.
 - Default candidate limit is `ITINERARY_MAX_CANDIDATES=6`.
 - Default prompt context budget is `ITINERARY_CONTEXT_BUDGET=6000`.
 - Gemini receives only compact candidate fields: candidate ID, entity type, name, coordinates, short tags, opening-hour status, price status/value where verified, suggested duration, and cluster ID.

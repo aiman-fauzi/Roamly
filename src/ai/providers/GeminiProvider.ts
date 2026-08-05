@@ -15,6 +15,8 @@ const DEFAULT_RETRY_BASE_DELAY_MS = 750
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_800
 const DEFAULT_THINKING_BUDGET = 0
 const DEFAULT_MODEL = 'gemini-2.5-flash'
+const MAX_REQUEST_TIMEOUT_MS = 30_000
+const MAX_OUTPUT_TOKENS = 2_000
 const PROVIDER = 'gemini'
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
 
@@ -453,8 +455,10 @@ export class GeminiProvider implements AIProvider {
     this.model = model
     this.client = options.client ?? new GoogleGenAI({ apiKey: apiKey! })
     this.logger = options.logger ?? console
-    this.requestTimeoutMs =
+    this.requestTimeoutMs = Math.min(
+      MAX_REQUEST_TIMEOUT_MS,
       options.requestTimeoutMs ?? readPositiveInteger(process.env.GEMINI_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)
+    )
     this.maxRetries = Math.min(
       1,
       options.maxRetries ?? readPositiveInteger(process.env.GEMINI_MAX_RETRIES, DEFAULT_MAX_RETRIES)
@@ -462,8 +466,10 @@ export class GeminiProvider implements AIProvider {
     this.retryBaseDelayMs =
       options.retryBaseDelayMs ??
       readPositiveInteger(process.env.GEMINI_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_BASE_DELAY_MS)
-    this.maxOutputTokens =
+    this.maxOutputTokens = Math.min(
+      MAX_OUTPUT_TOKENS,
       options.maxOutputTokens ?? readPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+    )
     this.thinkingBudget =
       options.thinkingBudget ?? readInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_THINKING_BUDGET)
     this.delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))

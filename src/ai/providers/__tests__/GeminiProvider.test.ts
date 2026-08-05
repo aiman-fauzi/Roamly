@@ -183,6 +183,27 @@ describe('GeminiProvider', () => {
     )
   })
 
+  it('caps stale timeout and output-token settings for production latency', async () => {
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockResolvedValue({ text: JSON.stringify(validItinerary) })
+    const provider = createProvider(generateContent, {
+      requestTimeoutMs: 60_000,
+      maxOutputTokens: 9_000,
+    })
+
+    await expect(provider.generateItinerary(request)).resolves.toEqual(validItinerary)
+
+    expect(generateContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          httpOptions: { timeout: 30_000 },
+          maxOutputTokens: 2_000,
+        }),
+      })
+    )
+  })
+
   it('expands compact itinerary JSON using supplied destination context', async () => {
     const generateContent = vi
       .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
