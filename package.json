@@ -9,7 +9,7 @@
         "start": "next start",
         "lint": "eslint src --ext .ts,.tsx",
         "typecheck": "tsc --noEmit",
-        "test": "vitest --run",
+        "test": "vitest --run --pool=forks --minWorkers=1 --maxWorkers=1",
         "test:watch": "vitest",
         "test:ui": "vitest --ui",
         "db:generate": "prisma generate --schema=src/db/schema.prisma",

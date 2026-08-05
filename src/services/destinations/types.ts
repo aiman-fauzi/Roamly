@@ -28,6 +28,30 @@ export interface DestinationRetrievalQuery {
   limitPerType?: number
 }
 
+export type ItineraryReadinessDecision = 'ELIGIBLE' | 'BACKUP' | 'REVIEW' | 'INELIGIBLE'
+
+export type DestinationDuplicateStatus =
+  | 'EXACT_DUPLICATE'
+  | 'SAME_PLACE_DIFFERENT_SOURCE'
+  | 'SAME_BRAND_DIFFERENT_BRANCH'
+  | 'POSSIBLE_DUPLICATE'
+  | 'DISTINCT'
+
+export interface DestinationPreferenceMatch {
+  selectedPreferences: string[]
+  strongMatches: string[]
+  partialMatches: string[]
+  unmatchedPreferences: string[]
+  score: number
+  reasons: string[]
+}
+
+export interface ItineraryReadiness {
+  score: number
+  decision: ItineraryReadinessDecision
+  reasons: string[]
+}
+
 export interface DestinationOpeningHourContext {
   dayOfWeek: number
   opensAt?: string | null
@@ -119,6 +143,11 @@ export interface DestinationCandidate {
 export interface RankedDestinationCandidate extends DestinationCandidate {
   rankScore: number
   rankReasons: string[]
+  preferenceMatch?: DestinationPreferenceMatch
+  itineraryReadiness?: ItineraryReadiness
+  duplicateStatus?: DestinationDuplicateStatus
+  penaltiesApplied?: string[]
+  diversityReasons?: string[]
 }
 
 export interface DestinationCluster {

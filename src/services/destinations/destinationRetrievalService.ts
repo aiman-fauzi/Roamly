@@ -27,22 +27,84 @@ import type {
   CandidateEnrichmentState,
   CandidateFactualStatus,
   DestinationCandidate,
+  DestinationDuplicateStatus,
   DestinationEntityType,
   DestinationFactSourceContext,
   DestinationOpeningHourContext,
+  DestinationPreferenceMatch,
   DestinationPriceConfidence,
   DestinationTicketPriceContext,
   DestinationRetrievalQuery,
   DestinationRetrievalResult,
+  ItineraryReadiness,
   RankedDestinationCandidate,
 } from '@/services/destinations/types'
 
 const DEFAULT_LIMIT_PER_TYPE = 8
 const DEFAULT_CLUSTER_RADIUS_KM = 2
+const DEFAULT_MIN_ELIGIBLE_CANDIDATES = 6
 
 const KNOWN_CITY_CENTERS: Record<string, GeoPoint> = {
   'malaysia:kuala-lumpur': { latitude: 3.1394, longitude: 101.6893 },
 }
+
+const PREFERENCE_INTENT_TERMS: Record<string, string[]> = {
+  sightseeing: ['landmark', 'viewpoint', 'heritage', 'architecture', 'city icon', 'cultural site', 'see', 'sightseeing'],
+  museums: ['museum', 'gallery', 'exhibition', 'cultural centre', 'cultural center'],
+  nightlife: ['night market', 'rooftop', 'entertainment district', 'bar', 'late night', 'nightlife'],
+  shopping: ['mall', 'market', 'shopping street', 'artisan market', 'shopping', 'crafts'],
+  photography: ['viewpoint', 'landmark', 'garden', 'architecture', 'street art', 'scenic area', 'photography', 'photo'],
+  sports: ['sports venue', 'active recreation', 'stadium', 'court', 'sports experience', 'sports centre', 'sports center'],
+  beaches: ['beach', 'coast', 'island', 'waterfront', 'seaside'],
+  hiking: ['trail', 'hill', 'nature reserve', 'forest', 'trekking', 'hiking'],
+  wellness_spa: ['spa', 'wellness', 'massage', 'hot spring', 'retreat'],
+  local: ['local', 'malaysian', 'mamak', 'hawker', 'kopitiam', 'street food', 'market'],
+  halal: ['halal', 'mamak', 'malay', 'malaysian'],
+  food: ['restaurant', 'cafe', 'food', 'dining', 'eat', 'hawker'],
+  culture: ['culture', 'heritage', 'museum', 'temple', 'mosque', 'gallery'],
+}
+
+const PREFERENCE_ALIASES: Record<string, string> = {
+  museum: 'museums',
+  museums: 'museums',
+  sightseeing: 'sightseeing',
+  nightlife: 'nightlife',
+  shopping: 'shopping',
+  photography: 'photography',
+  photo: 'photography',
+  sports: 'sports',
+  sport: 'sports',
+  beaches: 'beaches',
+  beach: 'beaches',
+  hiking: 'hiking',
+  wellness: 'wellness_spa',
+  spa: 'wellness_spa',
+  'wellness spa': 'wellness_spa',
+  'wellness and spa': 'wellness_spa',
+  local: 'local',
+  halal: 'halal',
+  food: 'food',
+  dining: 'food',
+  culture: 'culture',
+  cultural: 'culture',
+}
+
+const GENERIC_ACTIVITY_NAMES = new Set(['badminton', 'swimming', 'shopping', 'walking', 'dining'])
+const NON_PLACE_NAMES = new Set(['info center', 'information', 'tourist information'])
+const CHAIN_BRAND_TERMS = [
+  'mcdonald',
+  'kfc',
+  'burger king',
+  'starbucks',
+  'subway',
+  'pizza hut',
+  'domino',
+  'nando',
+  'secret recipe',
+]
+const OTHER_LOCALITY_TERMS = ['muar', 'penang', 'melaka', 'malacca', 'johor', 'ipoh', 'langkawi']
+const FAST_FOOD_PREFERENCES = new Set(['fast food', 'familiar food', 'burger'])
+const SPORTS_INTENTS = new Set(['sports', 'hiking'])
 
 const TRAVEL_STYLE_KEYWORDS: Record<string, string[]> = {
   adventure: ['adventure', 'outdoor', 'sports', 'hiking', 'badminton', 'active'],
@@ -581,42 +643,327 @@ function searchableText(candidate: DestinationCandidate): string {
     .toLowerCase()
 }
 
-function countTermMatches(text: string, terms: string[]): number {
-  return [...new Set(terms.map((term) => term.trim().toLowerCase()).filter(Boolean))].filter((term) =>
-    text.includes(term.replace(/_/g, ' '))
-  ).length
+function normalizeIntentTerm(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[_-]+/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function canonicalPreference(value: string): string | undefined {
+  const normalized = normalizeIntentTerm(value)
+  return PREFERENCE_ALIASES[normalized] ?? (PREFERENCE_INTENT_TERMS[normalized] ? normalized : undefined)
+}
+
+function selectedPreferenceKeys(query: DestinationRetrievalQuery): string[] {
+  return [
+    ...new Set(
+      [...(query.interests ?? []), ...(query.travelStyles ?? [])]
+        .map(canonicalPreference)
+        .filter((preference): preference is string => Boolean(preference))
+    ),
+  ]
+}
+
+function structuredPreferenceText(candidate: DestinationCandidate): string {
+  const wikivoyageSectionTerms = candidate.tags.flatMap((tag) => {
+    if (tag === 'wikivoyage-see') return ['see', 'sightseeing', 'landmark']
+    if (tag === 'wikivoyage-do') return ['do', 'activity']
+    if (tag === 'wikivoyage-eat') return ['eat', 'food', 'restaurant']
+    if (tag === 'wikivoyage-sleep') return ['sleep', 'hotel']
+    return []
+  })
+
+  return [
+    candidate.entityType.toLowerCase(),
+    ...candidate.categories,
+    ...candidate.tags,
+    ...wikivoyageSectionTerms,
+    ...(candidate.enrichment?.bestFor ?? []),
+    ...(candidate.enrichment?.searchTags ?? []),
+  ]
+    .map(normalizeIntentTerm)
+    .filter(Boolean)
+    .join(' ')
+}
+
+function fallbackPreferenceText(candidate: DestinationCandidate): string {
+  return normalizeIntentTerm(searchableText(candidate))
+}
+
+function evaluatePreferenceMatch(
+  candidate: DestinationCandidate,
+  query: DestinationRetrievalQuery
+): DestinationPreferenceMatch {
+  const selectedPreferences = selectedPreferenceKeys(query)
+  const structuredText = structuredPreferenceText(candidate)
+  const fallbackText = fallbackPreferenceText(candidate)
+  const strongMatches: string[] = []
+  const partialMatches: string[] = []
+  const unmatchedPreferences: string[] = []
+
+  for (const preference of selectedPreferences) {
+    const terms = PREFERENCE_INTENT_TERMS[preference] ?? [preference]
+    const structuredMatch = terms.some((term) => structuredText.includes(normalizeIntentTerm(term)))
+    const fallbackMatch = terms.some((term) => fallbackText.includes(normalizeIntentTerm(term)))
+
+    if (structuredMatch) strongMatches.push(preference)
+    else if (fallbackMatch) partialMatches.push(preference)
+    else unmatchedPreferences.push(preference)
+  }
+
+  const score =
+    selectedPreferences.length === 0
+      ? 6
+      : Math.min(30, strongMatches.length * 12 + partialMatches.length * 6)
+  const reasons: string[] = []
+  if (strongMatches.length > 0) reasons.push(`strong interest preference match: ${strongMatches.join(', ')}`)
+  if (partialMatches.length > 0) reasons.push(`partial interest preference match: ${partialMatches.join(', ')}`)
+  if (selectedPreferences.length > 0 && strongMatches.length === 0 && partialMatches.length === 0) {
+    reasons.push('no selected preference match')
+  }
+
+  return {
+    selectedPreferences,
+    strongMatches,
+    partialMatches,
+    unmatchedPreferences,
+    score,
+    reasons,
+  }
+}
+
+function selectedPreferenceSet(query: DestinationRetrievalQuery): Set<string> {
+  return new Set(selectedPreferenceKeys(query))
+}
+
+function hasFastFoodPreference(query: DestinationRetrievalQuery): boolean {
+  return [...(query.interests ?? []), ...(query.travelStyles ?? [])].some((preference) =>
+    FAST_FOOD_PREFERENCES.has(normalizeIntentTerm(preference))
+  )
+}
+
+function isGenericActivity(candidate: DestinationCandidate): boolean {
+  return candidate.entityType === 'ACTIVITY' && GENERIC_ACTIVITY_NAMES.has(normalizeIntentTerm(candidate.name))
+}
+
+function isNonPlaceEntity(candidate: DestinationCandidate): boolean {
+  const normalizedName = normalizeIntentTerm(candidate.name)
+  const terms = structuredPreferenceText(candidate)
+  return NON_PLACE_NAMES.has(normalizedName) || terms.includes(' information ')
+}
+
+function isChainBrand(candidate: DestinationCandidate): boolean {
+  if (candidate.entityType !== 'RESTAURANT') return false
+  const normalizedName = normalizeIntentTerm(candidate.name)
+  return CHAIN_BRAND_TERMS.some((brand) => normalizedName.includes(brand))
+}
+
+function hasLocalityNameMismatch(candidate: DestinationCandidate): boolean {
+  const normalizedName = normalizeIntentTerm(candidate.name)
+  const currentCity = normalizeIntentTerm(candidate.cityName)
+  const currentCountry = normalizeIntentTerm(candidate.countryName)
+  return OTHER_LOCALITY_TERMS.some((locality) => {
+    const normalizedLocality = normalizeIntentTerm(locality)
+    if (normalizedLocality === currentCity || normalizedLocality === currentCountry) return false
+    return normalizedName.includes(normalizedLocality)
+  })
+}
+
+function hasBranchEvidence(candidate: DestinationCandidate): boolean {
+  const address = normalizeIntentTerm(candidate.address ?? '')
+  return Boolean(candidate.sourceUrl || candidate.officialUrl) && address.includes(normalizeIntentTerm(candidate.cityName))
+}
+
+function isSportsCandidate(candidate: DestinationCandidate): boolean {
+  const terms = `${structuredPreferenceText(candidate)} ${normalizeIntentTerm(candidate.name)} ${fallbackPreferenceText(candidate)}`
+  return ['sports', 'sport', 'sports centre', 'sports center', 'court', 'stadium', 'badminton', 'cycle', 'bike lane', 'hike', 'hiking', 'trail'].some((term) =>
+    terms.includes(normalizeIntentTerm(term))
+  )
+}
+
+function hasSportsIntent(query: DestinationRetrievalQuery): boolean {
+  const preferences = selectedPreferenceSet(query)
+  const rawIntents = [...(query.interests ?? []), ...(query.travelStyles ?? [])].map(normalizeIntentTerm)
+  return [...SPORTS_INTENTS].some((intent) => preferences.has(intent)) || rawIntents.includes('adventure')
+}
+
+function hostFromUrl(url?: string | null): string | undefined {
+  if (!url) return undefined
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return undefined
+  }
+}
+
+function baseName(value: string): string {
+  return normalizeIntentTerm(value).replace(/\b(kuala lumpur|kl|hotel|restaurant|cafe|café)\b/g, '').trim()
+}
+
+function classifyDuplicateCandidate(
+  candidate: DestinationCandidate,
+  previous: RankedDestinationCandidate[]
+): { status: DestinationDuplicateStatus; penalty: number; reason?: string } {
+  const duplicate = previous.find((other) => {
+    if (other.entityType !== candidate.entityType) return false
+    const distance = haversineDistanceKm(
+      { latitude: other.latitude, longitude: other.longitude },
+      { latitude: candidate.latitude, longitude: candidate.longitude }
+    )
+    return other.slug === candidate.slug || distance < 0.08
+  })
+
+  if (!duplicate) {
+    const sameBrand = previous.find((other) => {
+      if (other.entityType !== candidate.entityType) return false
+      if (!baseName(other.name) || baseName(other.name) !== baseName(candidate.name)) return false
+      const distance = haversineDistanceKm(
+        { latitude: other.latitude, longitude: other.longitude },
+        { latitude: candidate.latitude, longitude: candidate.longitude }
+      )
+      return distance >= 0.08
+    })
+    return sameBrand
+      ? { status: 'SAME_BRAND_DIFFERENT_BRANCH', penalty: 4, reason: `same brand as ${sameBrand.name}` }
+      : { status: 'DISTINCT', penalty: 0 }
+  }
+
+  const candidateDomain = hostFromUrl(candidate.officialUrl ?? candidate.sourceUrl)
+  const duplicateDomain = hostFromUrl(duplicate.officialUrl ?? duplicate.sourceUrl)
+  const status: DestinationDuplicateStatus =
+    candidate.slug === duplicate.slug
+      ? 'EXACT_DUPLICATE'
+      : candidateDomain && duplicateDomain && candidateDomain === duplicateDomain
+        ? 'SAME_PLACE_DIFFERENT_SOURCE'
+        : 'POSSIBLE_DUPLICATE'
+  const penalty = status === 'POSSIBLE_DUPLICATE' ? 20 : 28
+
+  return { status, penalty, reason: `${status.toLowerCase()} of ${duplicate.name}` }
+}
+
+function readinessDecision(score: number, penalties: string[]): ItineraryReadiness['decision'] {
+  if (penalties.includes('GENERIC_ACTIVITY') || penalties.includes('NON_PLACE_ENTITY')) return 'INELIGIBLE'
+  if (penalties.includes('LOCALITY_NAME_MISMATCH') && penalties.includes('MISSING_SOURCE_URL')) return 'REVIEW'
+  if (penalties.includes('CHAIN_BRAND_LOW_PRIORITY') && score >= 60) return 'BACKUP'
+  if (penalties.includes('CLEAR_PREFERENCE_MISMATCH') && score >= 60) return 'BACKUP'
+  if (penalties.includes('WEAK_PREFERENCE_MATCH') && score >= 60) return 'BACKUP'
+  if (score >= 80) return 'ELIGIBLE'
+  if (score >= 60) return 'BACKUP'
+  if (score >= 40) return 'REVIEW'
+  return 'INELIGIBLE'
+}
+
+function evaluateItineraryReadiness(input: {
+  candidate: DestinationCandidate
+  query: DestinationRetrievalQuery
+  preference: DestinationPreferenceMatch
+  duplicate: { status: DestinationDuplicateStatus; penalty: number; reason?: string }
+}): { readiness: ItineraryReadiness; penalties: string[] } {
+  const { candidate, query, preference, duplicate } = input
+  const penalties: string[] = []
+  let score =
+    20 +
+    sourceScore(candidate) +
+    completenessScore(candidate) +
+    geographicScore(candidate) +
+    enrichmentScore(candidate)
+
+  if (candidate.cityId === query.cityId) score += 15
+  if (isValidGeoPoint(candidate)) score += 15
+  if (candidate.sourceUrl || candidate.websiteUrl) score += 8
+  else {
+    score -= 8
+    penalties.push('MISSING_SOURCE_URL')
+  }
+  if (candidate.openingHoursStatus === 'VERIFIED') score += 4
+  else if (candidate.openingHoursStatus === 'PARTIAL') score += 2
+  if (candidate.ticketPriceStatus === 'VERIFIED') score += 3
+  else if (candidate.ticketPriceStatus === 'PARTIAL') score += 1
+
+  score += preference.score
+  if (preference.selectedPreferences.length > 0 && preference.strongMatches.length === 0 && preference.partialMatches.length === 0) {
+    score -= 18
+    penalties.push('WEAK_PREFERENCE_MATCH')
+  }
+
+  if (isGenericActivity(candidate)) {
+    score -= 50
+    penalties.push('GENERIC_ACTIVITY')
+  }
+  if (isNonPlaceEntity(candidate)) {
+    score -= 35
+    penalties.push('NON_PLACE_ENTITY')
+  }
+  if (isChainBrand(candidate) && !hasFastFoodPreference(query)) {
+    score -= 25
+    penalties.push('CHAIN_BRAND_LOW_PRIORITY')
+  }
+  if (hasLocalityNameMismatch(candidate)) {
+    score -= hasBranchEvidence(candidate) ? 8 : 25
+    penalties.push('LOCALITY_NAME_MISMATCH')
+  }
+  if (isSportsCandidate(candidate) && !hasSportsIntent(query)) {
+    score -= 28
+    penalties.push('CLEAR_PREFERENCE_MISMATCH')
+  }
+  if (candidate.factualCompletenessScore < 45) {
+    score -= 8
+    penalties.push('LOW_INFORMATION_ENTITY')
+  }
+  if (duplicate.status !== 'DISTINCT') {
+    score -= duplicate.penalty
+    penalties.push(duplicate.status)
+  }
+  if (candidate.staleFactCount > 0) score -= Math.min(candidate.staleFactCount * 2, 6)
+
+  const boundedScore = Math.max(0, Math.min(100, Number(score.toFixed(1))))
+  const reasons = [
+    ...preference.reasons,
+    ...(candidate.sourceUrl || candidate.websiteUrl ? ['has source URL'] : []),
+    ...(candidate.openingHoursStatus === 'VERIFIED' ? ['verified opening hours'] : []),
+    ...(candidate.ticketPriceStatus === 'VERIFIED' ? ['verified price'] : []),
+    ...penalties,
+  ]
+
+  return {
+    readiness: {
+      score: boundedScore,
+      decision: readinessDecision(boundedScore, penalties),
+      reasons: [...new Set(reasons)],
+    },
+    penalties: [...new Set(penalties)],
+  }
 }
 
 function sourceScore(candidate: DestinationCandidate): number {
-  if (candidate.source === DestinationImportSource.OPENSTREETMAP) return 15
-  if (candidate.source === DestinationImportSource.WIKIVOYAGE) return 14
-  if (candidate.source === DestinationImportSource.GOVERNMENT_TOURISM) return 13
-  return 7
+  if (candidate.source === DestinationImportSource.GOVERNMENT_TOURISM) return 10
+  if (candidate.source === DestinationImportSource.OPENSTREETMAP) return 8
+  if (candidate.source === DestinationImportSource.WIKIVOYAGE) return 8
+  return 4
 }
 
 function completenessScore(candidate: DestinationCandidate): number {
-  return Math.min(20, Math.round(candidate.factualCompletenessScore * 0.2))
+  return Math.min(15, Math.round(candidate.factualCompletenessScore * 0.15))
 }
 
 function geographicScore(candidate: DestinationCandidate): number {
   const distance = candidate.distanceFromCityCenterKm
-  if (distance == null) return 12
-  if (distance <= 5) return 20
-  if (distance <= 12) return 18
-  if (distance <= 25) return 15
-  if (distance <= 45) return 8
+  if (distance == null) return 8
+  if (distance <= 5) return 15
+  if (distance <= 12) return 12
+  if (distance <= 25) return 8
+  if (distance <= 45) return 4
   return 0
 }
 
 function enrichmentScore(candidate: DestinationCandidate): number {
-  if (candidate.enrichmentState === 'ENRICHED') return 15
-  if (candidate.enrichmentState === 'PARTIALLY_ENRICHED') return 8
-  return 4
-}
-
-function interestScore(candidate: DestinationCandidate, interests: string[]): { score: number; matches: number } {
-  const matches = countTermMatches(searchableText(candidate), interests)
-  return { score: Math.min(matches * 5, 15), matches }
+  if (candidate.enrichmentState === 'ENRICHED') return 8
+  if (candidate.enrichmentState === 'PARTIALLY_ENRICHED') return 4
+  return 1
 }
 
 function travelStyleScore(
@@ -645,24 +992,6 @@ function budgetScore(candidate: DestinationCandidate, budgetLevel?: string): num
   return 1
 }
 
-function duplicatePenalty(
-  candidate: DestinationCandidate,
-  previous: RankedDestinationCandidate[]
-): { penalty: number; reason?: string } {
-  const duplicate = previous.find((other) => {
-    if (other.entityType !== candidate.entityType) return false
-    const distance = haversineDistanceKm(
-      { latitude: other.latitude, longitude: other.longitude },
-      { latitude: candidate.latitude, longitude: candidate.longitude }
-    )
-    return other.slug === candidate.slug || distance < 0.08
-  })
-
-  return duplicate
-    ? { penalty: 20, reason: `Possible duplicate of ${duplicate.name}` }
-    : { penalty: 0 }
-}
-
 export function rankDestinationCandidates(
   candidates: DestinationCandidate[],
   query: DestinationRetrievalQuery
@@ -671,48 +1000,78 @@ export function rankDestinationCandidates(
   const sortedInput = [...candidates].sort((first, second) => first.name.localeCompare(second.name))
 
   for (const candidate of sortedInput) {
-    const interests = query.interests ?? []
     const travelStyles = query.travelStyles ?? []
-    const interest = interestScore(candidate, interests)
     const style = travelStyleScore(candidate, travelStyles)
-    const duplicate = duplicatePenalty(candidate, ranked)
+    const preference = evaluatePreferenceMatch(candidate, query)
+    const duplicate = classifyDuplicateCandidate(candidate, ranked)
+    const readiness = evaluateItineraryReadiness({ candidate, query, preference, duplicate })
     const score = Math.max(
       0,
       Math.min(
         100,
-        sourceScore(candidate) +
-          completenessScore(candidate) +
-          geographicScore(candidate) +
-          enrichmentScore(candidate) +
-          interest.score +
-          style.score +
+        readiness.readiness.score +
+          Math.min(style.score, 5) +
           budgetScore(candidate, query.budgetLevel) -
-          Math.min(candidate.staleFactCount * 2, 6) -
-          duplicate.penalty
+          Math.min(readiness.penalties.length, 8)
       )
     )
     const rankReasons = [
       `${candidate.source.toLowerCase()} source`,
       `${candidate.enrichmentState.toLowerCase()} data`,
       `${candidate.distanceFromCityCenterKm ?? 'unknown'} km from city center`,
+      `readiness_${readiness.readiness.decision.toLowerCase()}_${readiness.readiness.score}`,
     ]
 
-    if (interest.matches > 0) rankReasons.push(`${interest.matches} interest match${interest.matches === 1 ? '' : 'es'}`)
+    for (const reason of preference.reasons) rankReasons.push(reason)
     if (style.matches.length > 0) rankReasons.push(`matches ${style.matches.join(', ')} travel style`)
     if (candidate.priceConfidence !== 'PRICE_UNKNOWN') rankReasons.push(candidate.priceConfidence.toLowerCase())
     if (candidate.openingHoursKnown) rankReasons.push(`opening_hours_${candidate.openingHoursStatus.toLowerCase()}`)
     if (candidate.ticketPriceStatus !== 'UNKNOWN') rankReasons.push(`ticket_price_${candidate.ticketPriceStatus.toLowerCase()}`)
     if (candidate.staleFactCount > 0) rankReasons.push(`${candidate.staleFactCount} stale fact marker${candidate.staleFactCount === 1 ? '' : 's'}`)
     if (duplicate.reason) rankReasons.push(duplicate.reason)
+    for (const penalty of readiness.penalties) rankReasons.push(penalty)
 
     ranked.push({
       ...candidate,
       rankScore: Number(score.toFixed(1)),
-      rankReasons,
+      rankReasons: [...new Set(rankReasons)],
+      preferenceMatch: preference,
+      itineraryReadiness: readiness.readiness,
+      duplicateStatus: duplicate.status,
+      penaltiesApplied: readiness.penalties,
     })
   }
 
   return ranked.sort((first, second) => second.rankScore - first.rankScore || first.name.localeCompare(second.name))
+}
+
+function selectReadyCandidates(
+  candidates: RankedDestinationCandidate[],
+  query: DestinationRetrievalQuery
+): RankedDestinationCandidate[] {
+  const minimumEligible = Math.min(
+    Math.max(DEFAULT_MIN_ELIGIBLE_CANDIDATES, query.limitPerType ?? DEFAULT_LIMIT_PER_TYPE),
+    candidates.length
+  )
+  const eligible = candidates.filter((candidate) => candidate.itineraryReadiness?.decision === 'ELIGIBLE')
+  const backup = candidates.filter((candidate) => candidate.itineraryReadiness?.decision === 'BACKUP')
+
+  if (eligible.length >= minimumEligible) return eligible
+
+  const selectedIds = new Set(eligible.map((candidate) => candidate.candidateId))
+  const selected = [...eligible]
+  for (const candidate of backup) {
+    if (selected.length >= minimumEligible) break
+    if (selectedIds.has(candidate.candidateId)) continue
+    selected.push({
+      ...candidate,
+      diversityReasons: [...(candidate.diversityReasons ?? []), 'backup used because eligible coverage is insufficient'],
+      rankReasons: [...candidate.rankReasons, 'backup used because eligible coverage is insufficient'],
+    })
+    selectedIds.add(candidate.candidateId)
+  }
+
+  return selected.sort((first, second) => second.rankScore - first.rankScore || first.name.localeCompare(second.name))
 }
 
 export function filterEligibleDestinationCandidates(
@@ -870,7 +1229,7 @@ export class DestinationRetrievalService {
     )
     const factAwareEligible = eligible.map((candidate) => enhanceCandidateWithFacts(candidate, effectiveFacts))
     const ranked = capPerType(
-      rankDestinationCandidates(factAwareEligible, query),
+      selectReadyCandidates(rankDestinationCandidates(factAwareEligible, query), query),
       query.limitPerType ?? DEFAULT_LIMIT_PER_TYPE
     )
     const clusters = groupNearbyCandidates(ranked, DEFAULT_CLUSTER_RADIUS_KM)

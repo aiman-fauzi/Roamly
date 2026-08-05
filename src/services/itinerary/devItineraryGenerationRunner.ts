@@ -90,7 +90,16 @@ function printSummary(summary: Awaited<ReturnType<ItineraryGenerationService['ge
   console.warn(`  compact context size: ${summary.contextSerializedSize}/${summary.contextMaxSerializedSize}`)
   console.warn('[itinerary:dev] supplied candidates')
   for (const candidate of summary.candidateIds) {
-    console.warn(`  - ${candidate.id} | ${candidate.type} | ${candidate.name} | rank ${candidate.rankScore}`)
+    const readiness = candidate.readinessDecision
+      ? ` | readiness ${candidate.readinessDecision}:${candidate.readinessScore ?? 'unknown'}`
+      : ''
+    const preferences = candidate.preferenceMatches?.length
+      ? ` | preference ${candidate.preferenceMatches.join(',')}`
+      : ''
+    const penalties = candidate.penaltiesApplied?.length
+      ? ` | penalties ${candidate.penaltiesApplied.join(',')}`
+      : ''
+    console.warn(`  - ${candidate.id} | ${candidate.type} | ${candidate.name} | rank ${candidate.rankScore}${readiness}${preferences}${penalties}`)
   }
   console.warn('[itinerary:dev] Gemini validation')
   console.warn(`  request latency: ${summary.generationLatencyMs}ms`)

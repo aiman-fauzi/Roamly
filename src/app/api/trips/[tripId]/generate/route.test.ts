@@ -82,7 +82,7 @@ describe('destination-aware itinerary generation route', () => {
     })
   })
 
-  it('returns recoverable service errors without persisting raw provider output', async () => {
+  it('maps unsupported candidate contract errors to a distinct route message', async () => {
     routeMocks.generate.mockRejectedValue(
       new ItineraryGenerationError(
         'AI_CONTRACT_VIOLATION',
@@ -92,7 +92,10 @@ describe('destination-aware itinerary generation route', () => {
           recoverable: true,
           category: 'AI_CONTRACT_VIOLATION',
           previousItineraryPreserved: true,
-          details: { validationIssues: ['unknown candidate'] },
+          details: {
+            unsupportedCandidateIds: ['ATTRACTION:unknown'],
+            validationIssues: ['unknown candidate'],
+          },
         }
       )
     )
@@ -104,12 +107,43 @@ describe('destination-aware itinerary generation route', () => {
 
     expect(response.status).toBe(422)
     expect(body.code).toBe('AI_CONTRACT_VIOLATION')
+    expect(body.error).toBe(
+      'The itinerary generator referenced a destination Roamly did not offer. Please try again.'
+    )
     expect(body.details).toMatchObject({
       recoverable: true,
       category: 'AI_CONTRACT_VIOLATION',
       previousItineraryPreserved: true,
     })
     expect(JSON.stringify(body)).not.toContain('rawText')
+  })
+
+  it('maps duplicate candidate contract errors to a distinct route message', async () => {
+    routeMocks.generate.mockRejectedValue(
+      new ItineraryGenerationError(
+        'AI_CONTRACT_VIOLATION',
+        'Generated itinerary referenced unsupported destination records.',
+        422,
+        {
+          recoverable: true,
+          category: 'AI_CONTRACT_VIOLATION',
+          previousItineraryPreserved: true,
+          details: {
+            duplicateCandidateIds: ['RESTAURANT:duplicate'],
+            validationIssues: ['Candidate RESTAURANT:duplicate is duplicated in the itinerary'],
+          },
+        }
+      )
+    )
+
+    const response = await POST(new Request('http://localhost/api/trips/trip-1/generate'), {
+      params: Promise.resolve({ tripId: 'trip-1' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(body.code).toBe('AI_CONTRACT_VIOLATION')
+    expect(body.error).toBe('The itinerary generator reused a destination. Please try again.')
   })
 
   it('distinguishes rate limiting as a recoverable route response', async () => {
@@ -134,12 +168,32 @@ describe('destination-aware itinerary generation route', () => {
 
     expect(response.status).toBe(429)
     expect(body.code).toBe('AI_RATE_LIMITED')
+    expect(body.error).toBe('Itinerary generation is temporarily rate limited. Please try again shortly.')
     expect(body.details).toMatchObject({
       recoverable: true,
       category: 'AI_RATE_LIMITED',
       previousItineraryPreserved: true,
       retryAfterMs: 10_000,
     })
+  })
+
+  it('distinguishes AI timeouts as a recoverable route response', async () => {
+    routeMocks.generate.mockRejectedValue(
+      new ItineraryGenerationError('AI_TIMEOUT', 'Gemini request timed out.', 503, {
+        recoverable: true,
+        category: 'AI_TIMEOUT',
+        previousItineraryPreserved: true,
+      })
+    )
+
+    const response = await POST(new Request('http://localhost/api/trips/trip-1/generate'), {
+      params: Promise.resolve({ tripId: 'trip-1' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(body.code).toBe('AI_TIMEOUT')
+    expect(body.error).toBe('Itinerary generation timed out. Please try again in a moment.')
   })
 
   it('distinguishes active generation locks from provider failures', async () => {

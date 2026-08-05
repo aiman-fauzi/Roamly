@@ -83,9 +83,66 @@ describe('rich itinerary rendering', () => {
     expect(screen.getByText('Morning')).toBeInTheDocument()
     expect(screen.getByText('09:00')).toBeInTheDocument()
     expect(screen.getByText('Kiyomizu-dera')).toBeInTheDocument()
-    expect(screen.getAllByText(/JPY 2,500/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Estimated JPY 2,500/i).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/MYR 80/i).length).toBeGreaterThan(0)
+    expect(screen.getByText('2 hrs')).toBeInTheDocument()
     expect(screen.getByText(/Daily total/i)).toBeInTheDocument()
+  })
+
+  it('distinguishes free and unknown prices', () => {
+    render(
+      <DayCard
+        day={{
+          ...itinerary.days[0],
+          morning: [
+            {
+              ...itinerary.days[0].morning[0],
+              title: 'Free Museum',
+              estimatedCostLocal: 0,
+              estimatedCostUserCurrency: 0,
+              priceConfidence: 'KNOWN_PRICE',
+              durationMinutes: 45,
+              transport: 'public',
+            },
+            {
+              ...itinerary.days[0].morning[0],
+              title: 'Unknown Price Garden',
+              estimatedCostLocal: 0,
+              estimatedCostUserCurrency: 0,
+              priceConfidence: 'PRICE_UNKNOWN',
+              durationMinutes: 90,
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByText('Free')).toBeInTheDocument()
+    expect(screen.getByText('Price unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Public transport')).toBeInTheDocument()
+    expect(screen.getByText('45 min')).toBeInTheDocument()
+    expect(screen.getByText('1 hr 30 min')).toBeInTheDocument()
+  })
+
+  it('hides the exchange-rate card when local and user currencies match', () => {
+    render(
+      <ItineraryHeader
+        itinerary={{
+          ...itinerary,
+          currencyLocal: 'MYR',
+          currencyUser: 'MYR',
+          exchangeRate: {
+            ...itinerary.exchangeRate,
+            baseCurrency: 'MYR',
+            quoteCurrency: 'MYR',
+            rate: 1,
+          },
+        }}
+        destination="Kuala Lumpur"
+      />
+    )
+
+    expect(screen.queryByText('Exchange rate')).not.toBeInTheDocument()
   })
 
   it('renders roadmap timeline labels in order', () => {

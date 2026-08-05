@@ -73,6 +73,11 @@ export interface ItineraryGenerationSummary {
     type: string
     name: string
     rankScore: number
+    readinessDecision?: string
+    readinessScore?: number
+    preferenceMatches?: string[]
+    penaltiesApplied?: string[]
+    diversityReasons?: string[]
   }>
   candidateTypeCounts: Record<DestinationEntityType, number>
   knownOpeningHoursCount: number
@@ -331,6 +336,12 @@ function logAllowedCandidateDiagnostics(base: Pick<ItineraryGenerationSummary, '
       id: candidate.id,
       type: candidate.type,
       name: candidate.name,
+      rankScore: candidate.rankScore,
+      readinessDecision: candidate.readinessDecision,
+      readinessScore: candidate.readinessScore,
+      preferenceMatches: candidate.preferenceMatches,
+      penaltiesApplied: candidate.penaltiesApplied,
+      diversityReasons: candidate.diversityReasons,
     })),
   })
 }
@@ -342,6 +353,12 @@ function logCandidateContractDiagnostics(summary: ItineraryGenerationSummary) {
       id: candidate.id,
       type: candidate.type,
       name: candidate.name,
+      rankScore: candidate.rankScore,
+      readinessDecision: candidate.readinessDecision,
+      readinessScore: candidate.readinessScore,
+      preferenceMatches: candidate.preferenceMatches,
+      penaltiesApplied: candidate.penaltiesApplied,
+      diversityReasons: candidate.diversityReasons,
     })),
     returnedCandidateIds: summary.returnedCandidateIds,
     returnedCandidateDetails: summary.returnedCandidateDetails,
@@ -588,12 +605,23 @@ export class ItineraryGenerationService {
         contextSerializedSize: destinationContext.serializedSize,
         contextMaxSerializedSize: destinationContext.maxSerializedSize,
         generationLatencyMs: 0,
-        candidateIds: destinationContext.candidates.map((candidate) => ({
-          id: candidate.id,
-          type: candidate.type,
-          name: candidate.name,
-          rankScore: candidate.rankScore,
-        })),
+        candidateIds: destinationContext.candidates.map((candidate) => {
+          const retrievalCandidate = destinationRetrieval.candidates.find((item) => item.candidateId === candidate.id)
+          return {
+            id: candidate.id,
+            type: candidate.type,
+            name: candidate.name,
+            rankScore: candidate.rankScore,
+            readinessDecision: retrievalCandidate?.itineraryReadiness?.decision,
+            readinessScore: retrievalCandidate?.itineraryReadiness?.score,
+            preferenceMatches: [
+              ...(retrievalCandidate?.preferenceMatch?.strongMatches ?? []),
+              ...(retrievalCandidate?.preferenceMatch?.partialMatches ?? []),
+            ],
+            penaltiesApplied: retrievalCandidate?.penaltiesApplied ?? [],
+            diversityReasons: retrievalCandidate?.diversityReasons ?? [],
+          }
+        }),
         candidateTypeCounts: candidateTypeCounts(destinationContext),
         knownOpeningHoursCount: destinationContext.candidates.filter((candidate) => candidate.openingHoursKnown).length,
         knownPriceCount: destinationContext.candidates.filter((candidate) => candidate.ticketPriceStatus === 'VERIFIED').length,

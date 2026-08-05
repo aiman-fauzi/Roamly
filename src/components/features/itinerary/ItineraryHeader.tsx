@@ -13,6 +13,9 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
   const budgetValue = budget.isBudgetExceeded
     ? Math.abs(budget.remainingBudgetUserCurrency)
     : budget.remainingBudgetUserCurrency
+  const showExchangeRate =
+    itinerary.exchangeRate.baseCurrency !== itinerary.exchangeRate.quoteCurrency &&
+    itinerary.currencyLocal !== itinerary.currencyUser
 
   return (
     <header className="space-y-5">
@@ -28,7 +31,7 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className={showExchangeRate ? 'grid gap-3 sm:grid-cols-3' : 'grid gap-3 sm:grid-cols-2'}>
         <div className="surface-panel p-4">
           <p className="text-sm font-medium text-neutral-700">Estimated total</p>
           <p className="mt-1 text-xl font-bold text-neutral-900">
@@ -47,18 +50,20 @@ export function ItineraryHeader({ itinerary, destination }: ItineraryHeaderProps
             Budget {formatCurrency(budget.totalBudgetUserCurrency, itinerary.currencyUser)}
           </p>
         </div>
-        <div className="surface-panel p-4">
-          <p className="text-sm font-medium text-neutral-700">Exchange rate</p>
-          <p className="mt-1 text-sm font-semibold text-neutral-900">
-            1 {itinerary.exchangeRate.baseCurrency} ={' '}
-            {formatCurrency(itinerary.exchangeRate.rate, itinerary.exchangeRate.quoteCurrency)}
-          </p>
-          <p className="text-sm text-neutral-700">
-            {itinerary.exchangeRate.source}
-            {itinerary.exchangeRate.fromCache ? ' cached' : ''} -{' '}
-            {formatDate(itinerary.exchangeRate.fetchedAt)}
-          </p>
-        </div>
+        {showExchangeRate && (
+          <div className="surface-panel p-4">
+            <p className="text-sm font-medium text-neutral-700">Exchange rate</p>
+            <p className="mt-1 text-sm font-semibold text-neutral-900">
+              1 {itinerary.exchangeRate.baseCurrency} ={' '}
+              {formatCurrency(itinerary.exchangeRate.rate, itinerary.exchangeRate.quoteCurrency)}
+            </p>
+            <p className="text-sm text-neutral-700">
+              {itinerary.exchangeRate.source}
+              {itinerary.exchangeRate.fromCache ? ' cached' : ''} -{' '}
+              {formatDate(itinerary.exchangeRate.fetchedAt)}
+            </p>
+          </div>
+        )}
       </div>
     </header>
   )

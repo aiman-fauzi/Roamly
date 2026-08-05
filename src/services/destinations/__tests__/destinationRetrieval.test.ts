@@ -198,6 +198,222 @@ describe('destination retrieval helpers', () => {
     expect(rankedCandidates[1].rankReasons.join(' ')).toContain('stale fact marker')
   })
 
+  it('scores explicit preference mappings from structured categories and tags', () => {
+    const rankedCandidates = rankDestinationCandidates(
+      [
+        candidate({
+          candidateId: 'ATTRACTION:market',
+          id: 'market',
+          name: 'Central Market',
+          tags: ['heritage', 'shopping', 'landmark'],
+          categories: ['market'],
+        }),
+        candidate({
+          candidateId: 'RESTAURANT:plain',
+          id: 'plain',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'Plain Cafe',
+          tags: ['cafe'],
+          categories: [],
+          description: 'A simple cafe.',
+        }),
+      ],
+      { cityId: 'city-1', interests: ['Sightseeing', 'Shopping', 'Photography'] }
+    )
+
+    expect(rankedCandidates[0].candidateId).toBe('ATTRACTION:market')
+    expect(rankedCandidates[0].preferenceMatch?.strongMatches).toEqual(
+      expect.arrayContaining(['sightseeing', 'shopping', 'photography'])
+    )
+    expect(rankedCandidates[0].itineraryReadiness?.decision).toBe('ELIGIBLE')
+    expect(rankedCandidates[1].penaltiesApplied).toContain('WEAK_PREFERENCE_MATCH')
+  })
+
+  it('marks generic sports activities ineligible when Sports is not selected', () => {
+    const [rankedCandidate] = rankDestinationCandidates(
+      [
+        candidate({
+          candidateId: 'ACTIVITY:badminton',
+          id: 'badminton',
+          entityType: 'ACTIVITY',
+          entityTable: 'activities',
+          name: 'Badminton',
+          slug: 'badminton',
+          description: null,
+          source: DestinationImportSource.WIKIVOYAGE,
+          sourceUrl: 'https://en.wikivoyage.org/wiki/Kuala_Lumpur%2FEast',
+          websiteUrl: 'https://en.wikivoyage.org/wiki/Kuala_Lumpur%2FEast',
+          tags: ['wikivoyage-do'],
+          categories: ['do'],
+        }),
+      ],
+      { cityId: 'city-1', interests: ['Sightseeing', 'Nightlife', 'Shopping', 'Photography'] }
+    )
+
+    expect(rankedCandidate.itineraryReadiness?.decision).toBe('INELIGIBLE')
+    expect(rankedCandidate.penaltiesApplied).toEqual(
+      expect.arrayContaining(['GENERIC_ACTIVITY', 'WEAK_PREFERENCE_MATCH'])
+    )
+  })
+
+  it('penalizes active recreation when only incidental preference words match', () => {
+    const [rankedCandidate] = rankDestinationCandidates(
+      [
+        candidate({
+          candidateId: 'ACTIVITY:cycle-hike',
+          id: 'cycle-hike',
+          entityType: 'ACTIVITY',
+          entityTable: 'activities',
+          name: 'Cycle or hike on SWBC',
+          slug: 'cycle-or-hike-on-swbc',
+          description: 'Walk or cycle on the bike lane towards a shopping mall.',
+          source: DestinationImportSource.WIKIVOYAGE,
+          sourceUrl: 'https://en.wikivoyage.org/wiki/Kuala_Lumpur%2FBrickfields_and_Bangsar',
+          websiteUrl: 'https://en.wikivoyage.org/wiki/Kuala_Lumpur%2FBrickfields_and_Bangsar',
+          tags: ['wikivoyage-do'],
+          categories: ['do'],
+        }),
+      ],
+      { cityId: 'city-1', interests: ['Shopping', 'Photography'] }
+    )
+
+    expect(rankedCandidate.preferenceMatch?.partialMatches).toContain('shopping')
+    expect(rankedCandidate.penaltiesApplied).toContain('CLEAR_PREFERENCE_MISMATCH')
+    expect(rankedCandidate.itineraryReadiness?.decision).not.toBe('ELIGIBLE')
+  })
+
+  it('downranks chain restaurants when local food alternatives exist', () => {
+    const rankedCandidates = rankDestinationCandidates(
+      [
+        candidate({
+          candidateId: 'RESTAURANT:mcdonalds',
+          id: 'mcdonalds',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: "McDonald's",
+          slug: 'mcdonalds',
+          tags: ['fast-food'],
+          categories: ['burger'],
+          sourceUrl: 'https://www.mcdonalds.com.my/',
+          websiteUrl: 'https://www.mcdonalds.com.my/',
+        }),
+        candidate({
+          candidateId: 'RESTAURANT:local',
+          id: 'local',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'Nasi Kandar Heritage',
+          slug: 'nasi-kandar-heritage',
+          tags: ['malaysian', 'restaurant'],
+          categories: ['mamak'],
+          description: 'Local Malaysian food near the heritage district.',
+        }),
+      ],
+      { cityId: 'city-1', interests: ['local', 'halal'] }
+    )
+
+    expect(rankedCandidates[0].candidateId).toBe('RESTAURANT:local')
+    expect(rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:mcdonalds')?.penaltiesApplied).toContain(
+      'CHAIN_BRAND_LOW_PRIORITY'
+    )
+  })
+
+  it('penalizes locality-name mismatches without rejecting proven local branches outright', () => {
+    const rankedCandidates = rankDestinationCandidates(
+      [
+        candidate({
+          candidateId: 'RESTAURANT:weak-muar',
+          id: 'weak-muar',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'Mee Bandung House (Muar)',
+          slug: 'mee-bandung-house-muar',
+          address: '4 Jalan Pahang Barat, 53000',
+          websiteUrl: null,
+          sourceUrl: null,
+          tags: ['malaysian', 'restaurant'],
+          categories: ['malaysian'],
+        }),
+        candidate({
+          candidateId: 'RESTAURANT:branch-muar',
+          id: 'branch-muar',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'Mee Bandung House (Muar)',
+          slug: 'mee-bandung-house-muar-branch',
+          address: '4 Jalan Pahang Barat, Kuala Lumpur, 53000',
+          websiteUrl: 'https://example.com/mee-bandung-kl',
+          sourceUrl: 'https://example.com/mee-bandung-kl',
+          tags: ['malaysian', 'restaurant'],
+          categories: ['malaysian'],
+        }),
+      ],
+      { cityId: 'city-1', interests: ['local'] }
+    )
+
+    const weak = rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:weak-muar')
+    const branch = rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:branch-muar')
+
+    expect(weak?.penaltiesApplied).toEqual(
+      expect.arrayContaining(['LOCALITY_NAME_MISMATCH', 'MISSING_SOURCE_URL'])
+    )
+    expect(weak?.itineraryReadiness?.decision).not.toBe('ELIGIBLE')
+    expect(branch?.penaltiesApplied).toContain('LOCALITY_NAME_MISMATCH')
+    expect(branch?.itineraryReadiness?.decision).not.toBe('INELIGIBLE')
+  })
+
+  it('distinguishes same-brand different branches from nearby duplicate records', () => {
+    const rankedCandidates = rankDestinationCandidates(
+      [
+        candidate({
+          candidateId: 'RESTAURANT:branch-a',
+          id: 'branch-a',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'Old Town',
+          slug: 'old-town-a',
+          latitude: 3.13,
+          longitude: 101.68,
+          tags: ['cafe'],
+        }),
+        candidate({
+          candidateId: 'RESTAURANT:branch-b',
+          id: 'branch-b',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'Old Town',
+          slug: 'old-town-b',
+          latitude: 3.2,
+          longitude: 101.74,
+          tags: ['cafe'],
+        }),
+        candidate({
+          candidateId: 'RESTAURANT:nearby',
+          id: 'nearby',
+          entityType: 'RESTAURANT',
+          entityTable: 'restaurants',
+          name: 'ZZ Nearby Cafe',
+          slug: 'zz-nearby-cafe',
+          latitude: 3.1301,
+          longitude: 101.6801,
+          tags: ['cafe'],
+          sourceUrl: null,
+          websiteUrl: null,
+          officialUrl: undefined,
+        }),
+      ],
+      { cityId: 'city-1', interests: ['food'] }
+    )
+
+    expect(rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:branch-b')?.duplicateStatus).toBe(
+      'SAME_BRAND_DIFFERENT_BRANCH'
+    )
+    expect(rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:nearby')?.duplicateStatus).toBe(
+      'POSSIBLE_DUPLICATE'
+    )
+  })
+
   it('calculates Haversine distance in kilometres', () => {
     const distance = haversineDistanceKm(
       { latitude: 3.1394, longitude: 101.6893 },
@@ -437,5 +653,78 @@ describe('destination retrieval helpers', () => {
     expect(result.candidates[0].rankReasons).toEqual(
       expect.arrayContaining(['opening_hours_verified', 'ticket_price_verified'])
     )
+  })
+
+  it('excludes REVIEW and INELIGIBLE candidates from retrieval results', async () => {
+    const updatedAt = new Date('2026-08-04T00:00:00.000Z')
+    const city = {
+      id: 'city-1',
+      name: 'Kuala Lumpur',
+      slug: 'kuala-lumpur',
+      latitude: 3.1394,
+      longitude: 101.6893,
+      country: { name: 'Malaysia', slug: 'malaysia', currencyCode: 'MYR' },
+    }
+    const db = {
+      attraction: {
+        findMany: async () => [
+          {
+            id: 'central-market',
+            cityId: 'city-1',
+            name: 'Central Market',
+            slug: 'central-market',
+            description: 'A heritage market for sightseeing, shopping, and photography.',
+            address: 'Kuala Lumpur',
+            latitude: 3.145,
+            longitude: 101.695,
+            websiteUrl: 'https://example.com/central-market',
+            phone: null,
+            priceLevel: null,
+            durationMinutes: 90,
+            updatedAt,
+            city,
+            tags: [{ name: 'heritage', slug: 'heritage' }, { name: 'shopping', slug: 'shopping' }],
+            openingHours: [],
+            enrichment: null,
+          },
+        ],
+      },
+      restaurant: { findMany: async () => [] },
+      hotel: { findMany: async () => [] },
+      activity: {
+        findMany: async () => [
+          {
+            id: 'badminton',
+            cityId: 'city-1',
+            name: 'Badminton',
+            slug: 'badminton',
+            description: null,
+            category: 'do',
+            address: null,
+            latitude: 3.119444,
+            longitude: 101.7275,
+            websiteUrl: 'https://en.wikivoyage.org/wiki/Kuala_Lumpur%2FEast',
+            phone: null,
+            priceLevel: null,
+            durationMinutes: null,
+            updatedAt,
+            city,
+            tags: [{ name: 'wikivoyage-do', slug: 'wikivoyage-do' }],
+            openingHours: [],
+            enrichment: null,
+          },
+        ],
+      },
+    }
+    const factService = { resolveEffectiveFactsForEntities: async () => new Map() }
+    const service = new DestinationRetrievalService(db as never, factService as never)
+
+    const result = await service.retrieve({
+      cityId: 'city-1',
+      interests: ['Sightseeing', 'Nightlife', 'Shopping', 'Photography'],
+    })
+
+    expect(result.candidates.map((item) => item.candidateId)).toEqual(['ATTRACTION:central-market'])
+    expect(result.candidates[0].itineraryReadiness?.decision).toBe('ELIGIBLE')
   })
 })
