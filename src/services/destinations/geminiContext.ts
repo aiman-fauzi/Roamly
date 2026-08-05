@@ -5,8 +5,8 @@ import type {
   RankedDestinationCandidate,
 } from '@/services/destinations/types'
 
-const DEFAULT_MAX_CANDIDATES = 24
-const DEFAULT_MAX_SERIALIZED_SIZE = 12_000
+const DEFAULT_MAX_CANDIDATES = 6
+const DEFAULT_MAX_SERIALIZED_SIZE = 6_000
 const DIVERSITY_SEED_TYPES: RankedDestinationCandidate['entityType'][] = [
   'ATTRACTION',
   'RESTAURANT',
@@ -18,10 +18,32 @@ export interface GeminiContextOptions {
   maxSerializedSize?: number
 }
 
-function summarize(candidate: RankedDestinationCandidate): string | undefined {
-  const summary = candidate.enrichment?.shortSummary ?? candidate.description
-  if (!summary) return undefined
-  return summary.length > 240 ? `${summary.slice(0, 237).trim()}...` : summary
+export interface CompactGeminiDestinationContext {
+  cityId: string
+  candidateCount: number
+  omittedCandidateCount: number
+  candidates: Array<{
+    candidateId: string
+    entityType: RankedDestinationCandidate['entityType']
+    name: string
+    coordinates: {
+      latitude: number
+      longitude: number
+    }
+    tags: string[]
+    openingHoursStatus: string
+    priceStatus: string
+    priceConfidence: string
+    verifiedPrice?: {
+      amount?: number
+      minAmount?: number
+      maxAmount?: number
+      currency: string
+      priceType?: string
+    }
+    suggestedDurationMinutes?: number
+    clusterId?: string
+  }>
 }
 
 function toCandidateContext(
@@ -34,13 +56,12 @@ function toCandidateContext(
     id: candidate.candidateId,
     type: candidate.entityType,
     name: candidate.name,
-    summary: summarize(candidate),
     latitude: Number(candidate.latitude.toFixed(6)),
     longitude: Number(candidate.longitude.toFixed(6)),
     address: candidate.address ?? undefined,
-    categories: candidate.categories.slice(0, 8),
-    tags: [...new Set([...candidate.tags, ...(candidate.enrichment?.searchTags ?? [])])].slice(0, 12),
-    openingHours: candidate.openingHours.length > 0 ? candidate.openingHours.slice(0, 14) : [],
+    categories: candidate.categories.slice(0, 3),
+    tags: [...new Set([...candidate.tags, ...(candidate.enrichment?.searchTags ?? [])])].slice(0, 5),
+    openingHours: [],
     openingHoursStatus: candidate.openingHoursStatus,
     openingHoursKnown: candidate.openingHoursKnown,
     ticketPrice:
@@ -50,20 +71,18 @@ function toCandidateContext(
             ...candidate.ticketPrices[0],
             confidence: candidate.priceConfidence,
           },
-    ticketPrices: candidate.ticketPrices,
+    ticketPrices: [],
     ticketPriceStatus: candidate.ticketPriceStatus,
     priceConfidence: candidate.priceConfidence,
-    officialUrl: candidate.officialUrl ?? undefined,
     officialUrlStatus: candidate.officialUrlStatus,
     estimatedVisitDurationMinutes,
     source: candidate.source.toLowerCase(),
-    lastVerifiedAt: candidate.lastVerifiedAt?.toISOString(),
     factualCompletenessScore: candidate.factualCompletenessScore,
     staleFactCount: candidate.staleFactCount,
     factualStatus: candidate.factualStatus,
-    factSourceSummary: candidate.factSourceSummary,
+    factSourceSummary: [],
     rankScore: candidate.rankScore,
-    rankReasons: candidate.rankReasons.slice(0, 5),
+    rankReasons: [],
     enrichmentState: candidate.enrichmentState,
   }
 }
@@ -100,6 +119,55 @@ function scopedNearestNeighbors(
       candidateId: entry.candidateId,
       neighbors: entry.neighbors.filter((neighbor) => selectedIds.has(neighbor.candidateId)),
     }))
+}
+
+function clusterIdsByCandidateId(
+  clusters: DestinationRetrievalResult['clusters']
+): Map<string, string> {
+  const lookup = new Map<string, string>()
+  for (const cluster of clusters) {
+    for (const candidateId of cluster.candidateIds) {
+      if (!lookup.has(candidateId)) lookup.set(candidateId, cluster.id)
+    }
+  }
+  return lookup
+}
+
+export function compactDestinationContextForPrompt(
+  context: GeminiDestinationContext
+): CompactGeminiDestinationContext {
+  const clusterIds = clusterIdsByCandidateId(context.clusters)
+
+  return {
+    cityId: context.cityId,
+    candidateCount: context.candidateCount,
+    omittedCandidateCount: context.omittedCandidateCount,
+    candidates: context.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      entityType: candidate.type,
+      name: candidate.name,
+      coordinates: {
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+      },
+      tags: [...new Set([...candidate.categories, ...candidate.tags])].slice(0, 6),
+      openingHoursStatus: candidate.openingHoursKnown ? candidate.openingHoursStatus : 'UNKNOWN',
+      priceStatus: candidate.ticketPriceStatus,
+      priceConfidence: candidate.priceConfidence,
+      verifiedPrice:
+        candidate.ticketPriceStatus === 'VERIFIED' && candidate.ticketPrice
+          ? {
+              amount: candidate.ticketPrice.amount,
+              minAmount: candidate.ticketPrice.minAmount,
+              maxAmount: candidate.ticketPrice.maxAmount,
+              currency: candidate.ticketPrice.currency,
+              priceType: candidate.ticketPrice.priceType,
+            }
+          : undefined,
+      suggestedDurationMinutes: candidate.estimatedVisitDurationMinutes,
+      clusterId: clusterIds.get(candidate.id),
+    })),
+  }
 }
 
 function orderCandidatesForContext(
@@ -149,7 +217,7 @@ export function buildGeminiDestinationContext(
       serializedSize: 0,
       maxSerializedSize,
     }
-    const size = serializedSize(draft)
+    const size = serializedSize(compactDestinationContextForPrompt(draft))
     if (size > maxSerializedSize && selected.length > 0) break
     if (size > maxSerializedSize) continue
     selected.push(next[next.length - 1])
@@ -165,7 +233,7 @@ export function buildGeminiDestinationContext(
     serializedSize: 0,
     maxSerializedSize,
   }
-  context.serializedSize = serializedSize(context)
+  context.serializedSize = serializedSize(compactDestinationContextForPrompt(context))
 
   return context
 }

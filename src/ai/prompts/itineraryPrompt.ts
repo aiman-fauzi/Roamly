@@ -1,5 +1,6 @@
 import type { GenerateItineraryRequest } from '@/ai/types'
 import { FOOD_OPTIONS, TRAVEL_STYLE_OPTIONS } from '@/constants/questionnaire'
+import { compactDestinationContextForPrompt } from '@/services/destinations/geminiContext'
 
 const TRAVEL_STYLE_LABELS = new Map(
   TRAVEL_STYLE_OPTIONS.map((option) => [option.value, option.label])
@@ -13,19 +14,16 @@ function formatSelections(values: string[], labels: Map<string, string>): string
 function formatDestinationContext(request: GenerateItineraryRequest): string[] {
   if (!request.destinationContext) return []
 
+  const compactContext = compactDestinationContextForPrompt(request.destinationContext)
+
   return [
     '',
     '## Supplied Destination Candidates',
     'Use only these destination candidates for place-based itinerary items.',
-    'Every morning, afternoon, and evening item must reference one supplied candidateId.',
+    'Every item must reference one supplied candidateId.',
     'Do not invent attractions, restaurants, hotels, activities, addresses, coordinates, prices, or opening hours.',
-    'If a candidate has PRICE_UNKNOWN, use 0 for item cost and set priceConfidence to PRICE_UNKNOWN.',
-    'Do not invent missing opening hours or ticket prices; mark unknown information for user verification.',
-    'Prefer VERIFIED facts over STALE facts. Stale facts may be useful, but must be labelled for verification.',
-    'If openingHoursStatus is UNKNOWN, do not state that the place is open at a specific time unless you clearly label the timing as an assumption.',
-    'If openingHoursKnown is false, do not state that the place is open at a specific time.',
-    'If staleFactCount is greater than 0, include a concise tip or note telling the traveler to verify current facts before visiting.',
-    JSON.stringify(request.destinationContext, null, 2),
+    'If priceStatus is UNKNOWN, do not invent a price.',
+    JSON.stringify(compactContext),
   ]
 }
 
@@ -49,10 +47,12 @@ function formatBudgetSummary(request: GenerateItineraryRequest): string[] {
   return [
     '',
     '## Deterministic Budget Summary',
-    'Use this budget summary as the source of truth for whole-trip flight, hotel, allowance, contingency, and missing-cost context.',
-    'Do not replace known offer totals with invented prices.',
-    'Mention unknown or partial categories in notes or tips where useful.',
-    JSON.stringify(request.budgetSummary, null, 2),
+    'Backend budget calculation is the source of truth. Use this only for high-level awareness; do not output budget fields.',
+    JSON.stringify({
+      currency: request.budgetSummary.currency,
+      total: request.budgetSummary.total.amount,
+      missingData: request.budgetSummary.missingData.slice(0, 6),
+    }),
   ]
 }
 
@@ -101,83 +101,16 @@ export function buildItineraryPrompt(request: GenerateItineraryRequest): string 
 
   lines.push(
     '',
-    '## Cost and Currency Rules',
-    `Use ONLY the provided exchange rate for conversion. Do not invent or update exchange rates.`,
-    `Every item must include estimatedCostLocal in ${request.destinationCurrency}, estimatedCostUserCurrency in ${request.userCurrency}, and priceConfidence.`,
-    'Use KNOWN_PRICE only when a supplied candidate includes an exact sourced price. Use ESTIMATED_PRICE only when structured source data supports an estimate. Otherwise use PRICE_UNKNOWN.',
-    'Daily totals must equal the sum of all morning, afternoon, and evening item costs for that day.',
-    'Grand total must equal the sum of daily totals. Show whether the budget is exceeded.',
-    '',
     '## Output Format',
     'Return ONLY a valid JSON object. Do not include markdown, explanations, or code fences.',
-    'The JSON must conform exactly to this schema:',
-    '{',
-    '  "title": "string",',
-    '  "summary": "string",',
-    '  "selectedFlightOfferId": "optional supplied flight offerId",',
-    '  "selectedHotelOfferId": "optional supplied hotel offerId",',
-    `  "currencyLocal": "${request.destinationCurrency}",`,
-    `  "currencyUser": "${request.userCurrency}",`,
-    '  "exchangeRate": {',
-    '    "baseCurrency": "string",',
-    '    "quoteCurrency": "string",',
-    '    "rate": 0,',
-    '    "source": "string",',
-    '    "fetchedAt": "ISO timestamp string",',
-    '    "fromCache": false',
-    '  },',
-    '  "budget": {',
-    '    "totalBudgetUserCurrency": 0,',
-    '    "estimatedTotalLocal": 0,',
-    '    "estimatedTotalUserCurrency": 0,',
-    '    "remainingBudgetUserCurrency": 0,',
-    '    "isBudgetExceeded": false',
-    '  },',
-    '  "days": [',
-    '    {',
-    '      "dayNumber": 1,',
-    '      "theme": "string",',
-    '      "morning": [',
-    '        {',
-    '          "time": "08:30",',
-    '          "candidateId": "ATTRACTION:stable-id-from-candidates",',
-    '          "title": "string",',
-    '          "description": "string",',
-    '          "location": "string",',
-    '          "latitude": 0,',
-    '          "longitude": 0,',
-    '          "transport": "string",',
-    '          "estimatedDuration": "string",',
-    '          "durationMinutes": 120,',
-    '          "reason": "string explaining why this candidate fits the trip",',
-    '          "estimatedCostLocal": 0,',
-    '          "estimatedCostUserCurrency": 0,',
-    '          "currencyLocal": "string",',
-    '          "currencyUser": "string",',
-    '          "priceConfidence": "KNOWN_PRICE | ESTIMATED_PRICE | PRICE_UNKNOWN",',
-    '          "tips": ["string"]',
-    '        }',
-    '      ],',
-    '      "afternoon": [],',
-    '      "evening": [],',
-    '      "dailyTotalLocal": 0,',
-    '      "dailyTotalUserCurrency": 0,',
-    '      "notes": ["string"]',
-    '    }',
-    '  ],',
-    '  "roadmap": [',
-    '    {',
-    '      "dayNumber": 1,',
-    '      "items": [{ "label": "Central Market", "kind": "attraction", "time": "09:00" }]',
-    '    }',
-    '  ]',
-    '}',
+    'The JSON must conform exactly to this compact schema:',
+    '{"items":[{"candidateId":"supplied candidateId","day":1,"startTime":"09:00","durationMinutes":90,"reason":"short reason"}]}',
     '',
-    `Produce exactly ${request.durationDays} day objects. Each day must include morning, afternoon, and evening arrays.`,
-    'Each day should include transportation, estimated duration, estimated cost, and notes.',
-    'Roadmap item kind must be one of: attraction, restaurant, hotel, food, transport, activity, shopping, nightlife, start, end, other.',
-    'Roadmap items must be structured data for a vertical travel timeline.',
-    'Grand Total and budget comparison must be represented in the budget object.'
+    `Use day values from 1 to ${request.durationDays}.`,
+    'Use startTime as HH:mm in local destination time.',
+    'Keep reason under 120 characters.',
+    'Do not output titles, descriptions, coordinates, prices, budget, exchange rates, roadmap, notes, or transport.',
+    'The backend will enrich valid candidate IDs from Supabase metadata.'
   )
 
   return lines.join('\n')

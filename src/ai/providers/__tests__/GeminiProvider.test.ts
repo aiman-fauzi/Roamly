@@ -90,6 +90,49 @@ const request: GenerateItineraryRequest = {
   preferredLanguage: 'en',
 }
 
+const requestWithDestinationContext: GenerateItineraryRequest = {
+  ...request,
+  durationDays: 1,
+  destinationContext: {
+    cityId: 'city-1',
+    candidateCount: 1,
+    omittedCandidateCount: 0,
+    serializedSize: 500,
+    maxSerializedSize: 6000,
+    clusters: [{ id: 'cluster-1', centerLatitude: 3.145, centerLongitude: 101.695, candidateIds: ['ATTRACTION:kiyomizu-dera'], averageRankScore: 90 }],
+    nearestNeighbors: [],
+    candidates: [
+      {
+        id: 'ATTRACTION:kiyomizu-dera',
+        type: 'ATTRACTION',
+        name: 'Kiyomizu-dera',
+        latitude: 35.0,
+        longitude: 135.0,
+        address: 'Higashiyama',
+        categories: ['temple'],
+        tags: ['culture'],
+        openingHours: [],
+        openingHoursStatus: 'UNKNOWN',
+        openingHoursKnown: false,
+        ticketPrice: { amount: 2500, currency: 'JPY', priceType: 'FIXED', confidence: 'KNOWN_PRICE' },
+        ticketPrices: [],
+        ticketPriceStatus: 'VERIFIED',
+        priceConfidence: 'KNOWN_PRICE',
+        officialUrlStatus: 'UNKNOWN',
+        estimatedVisitDurationMinutes: 120,
+        source: 'openstreetmap',
+        factualCompletenessScore: 80,
+        staleFactCount: 0,
+        factualStatus: 'UNKNOWN',
+        factSourceSummary: [],
+        rankScore: 90,
+        rankReasons: [],
+        enrichmentState: 'SOURCE_ONLY',
+      },
+    ],
+  },
+}
+
 function createProvider(generateContent: TestGenerateContent, overrides: Partial<ConstructorParameters<typeof GeminiProvider>[0]> = {}) {
   return new GeminiProvider({
     apiKey: 'test-key',
@@ -127,10 +170,53 @@ describe('GeminiProvider', () => {
       expect.objectContaining({
         model: 'gemini-test-model',
         config: expect.objectContaining({
+          maxOutputTokens: 1800,
           responseMimeType: 'application/json',
+          responseJsonSchema: expect.objectContaining({ required: ['items'] }),
+          temperature: 0.2,
+          thinkingConfig: {
+            includeThoughts: false,
+            thinkingBudget: 0,
+          },
         }),
       })
     )
+  })
+
+  it('expands compact itinerary JSON using supplied destination context', async () => {
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockResolvedValue({
+        text: JSON.stringify({
+          items: [
+            {
+              candidateId: 'ATTRACTION:kiyomizu-dera',
+              day: 1,
+              startTime: '09:00',
+              durationMinutes: 120,
+              reason: 'Best culture match.',
+            },
+          ],
+        }),
+      })
+    const provider = createProvider(generateContent)
+
+    await expect(provider.generateItinerary(requestWithDestinationContext)).resolves.toMatchObject({
+      title: 'Kyoto in 1 day',
+      days: [
+        expect.objectContaining({
+          morning: [
+            expect.objectContaining({
+              candidateId: 'ATTRACTION:kiyomizu-dera',
+              title: 'Kiyomizu-dera',
+              estimatedCostLocal: 2500,
+              estimatedCostUserCurrency: 80,
+              priceConfidence: 'KNOWN_PRICE',
+            }),
+          ],
+        }),
+      ],
+    })
   })
 
   it('retries transient Gemini failures once before succeeding', async () => {

@@ -13,7 +13,10 @@ import {
   rankDestinationCandidates,
 } from '@/services/destinations/destinationRetrievalService'
 import { destinationFactKey } from '@/services/destinations/facts/destinationFactService'
-import { buildGeminiDestinationContext } from '@/services/destinations/geminiContext'
+import {
+  buildGeminiDestinationContext,
+  compactDestinationContextForPrompt,
+} from '@/services/destinations/geminiContext'
 import {
   buildNearestNeighbors,
   groupNearbyCandidates,
@@ -253,9 +256,17 @@ describe('destination retrieval helpers', () => {
       openingHoursStatus: 'UNKNOWN',
       priceConfidence: 'PRICE_UNKNOWN',
       ticketPriceStatus: 'UNKNOWN',
-      lastVerifiedAt: '2026-08-04T00:00:00.000Z',
       factualCompletenessScore: 80,
       staleFactCount: 0,
+    })
+    const promptContext = compactDestinationContextForPrompt(context)
+    expect(JSON.stringify(promptContext)).not.toContain('lastVerifiedAt')
+    expect(JSON.stringify(promptContext)).not.toContain('rankReasons')
+    expect(promptContext.candidates[0]).toMatchObject({
+      candidateId: 'ATTRACTION:a',
+      entityType: 'ATTRACTION',
+      openingHoursStatus: 'UNKNOWN',
+      priceStatus: 'UNKNOWN',
     })
   })
 

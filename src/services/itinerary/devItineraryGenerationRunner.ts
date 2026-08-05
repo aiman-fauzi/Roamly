@@ -16,7 +16,10 @@ interface DevRunnerOptions {
   env?: NodeJS.ProcessEnv
 }
 
-const DEFAULT_MAX_CANDIDATES = 9
+function readDefaultMaxCandidates(env: NodeJS.ProcessEnv): number {
+  const parsed = Number(env.ITINERARY_MAX_CANDIDATES)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 6
+}
 
 function readOption(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(`--${name}`)
@@ -39,7 +42,10 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
   return parsed
 }
 
-export function parseDevItineraryGenerationArgs(argv: string[]): DevItineraryGenerationArgs {
+export function parseDevItineraryGenerationArgs(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env
+): DevItineraryGenerationArgs {
   const persist = hasFlag(argv, 'persist')
   const dryRun = hasFlag(argv, 'dry-run')
   if (persist && dryRun) {
@@ -51,7 +57,7 @@ export function parseDevItineraryGenerationArgs(argv: string[]): DevItineraryGen
 
   return {
     tripId,
-    maxCandidates: readPositiveInteger(readOption(argv, 'maxCandidates'), DEFAULT_MAX_CANDIDATES),
+    maxCandidates: readPositiveInteger(readOption(argv, 'maxCandidates'), readDefaultMaxCandidates(env)),
     persist,
     printContextSummary: hasFlag(argv, 'print-context-summary'),
   }
@@ -80,12 +86,14 @@ function printSummary(summary: Awaited<ReturnType<ItineraryGenerationService['ge
   console.warn(`  known opening-hours count: ${summary.knownOpeningHoursCount}`)
   console.warn(`  known-price count: ${summary.knownPriceCount}`)
   console.warn(`  stale-fact count: ${summary.staleFactCount}`)
-  console.warn(`  context size: ${summary.contextSerializedSize}/${summary.contextMaxSerializedSize}`)
+  console.warn(`  raw context size: ${summary.contextRawSerializedSize}`)
+  console.warn(`  compact context size: ${summary.contextSerializedSize}/${summary.contextMaxSerializedSize}`)
   console.warn('[itinerary:dev] supplied candidates')
   for (const candidate of summary.candidateIds) {
     console.warn(`  - ${candidate.id} | ${candidate.type} | ${candidate.name} | rank ${candidate.rankScore}`)
   }
   console.warn('[itinerary:dev] Gemini validation')
+  console.warn(`  request latency: ${summary.generationLatencyMs}ms`)
   console.warn(`  items returned: ${summary.geminiItemsReturned}`)
   console.warn(`  valid items: ${summary.validItems}`)
   console.warn(`  rejected items: ${summary.rejectedItems}`)
@@ -111,7 +119,7 @@ export async function runDevItineraryGenerationCli(
     return 1
   }
 
-  const args = parseDevItineraryGenerationArgs(argv)
+  const args = parseDevItineraryGenerationArgs(argv, env)
   printHeader(args)
 
   const service = options.service ?? new DefaultItineraryGenerationService()

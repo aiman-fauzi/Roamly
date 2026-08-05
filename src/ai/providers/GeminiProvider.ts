@@ -12,7 +12,11 @@ import type {
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_RETRIES = 1
 const DEFAULT_RETRY_BASE_DELAY_MS = 750
+const DEFAULT_MAX_OUTPUT_TOKENS = 1_800
+const DEFAULT_THINKING_BUDGET = 0
+const DEFAULT_MODEL = 'gemini-2.5-flash'
 const PROVIDER = 'gemini'
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
 
 const itineraryItemSchema = z.object({
   candidateId: z.string().min(1),
@@ -63,7 +67,7 @@ const roadmapItemSchema = z.object({
   time: z.string().optional(),
 })
 
-const itinerarySchema = z.object({
+const richItinerarySchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
   selectedFlightOfferId: z.string().min(1).optional(),
@@ -94,6 +98,42 @@ const itinerarySchema = z.object({
   ),
 })
 
+const compactItinerarySchema = z.object({
+  items: z.array(
+    z.object({
+      candidateId: z.string().min(1),
+      day: z.number().int().positive(),
+      startTime: z.string().regex(TIME_PATTERN),
+      durationMinutes: z.number().int().min(15).max(720),
+      reason: z.string().min(1).max(160),
+    }).strict()
+  ).min(1),
+}).strict()
+
+const COMPACT_RESPONSE_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    items: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          candidateId: { type: 'string' },
+          day: { type: 'integer', minimum: 1 },
+          startTime: { type: 'string', pattern: '^([01]\\\\d|2[0-3]):[0-5]\\\\d$' },
+          durationMinutes: { type: 'integer', minimum: 15, maximum: 720 },
+          reason: { type: 'string', minLength: 1, maxLength: 160 },
+        },
+        required: ['candidateId', 'day', 'startTime', 'durationMinutes', 'reason'],
+      },
+    },
+  },
+  required: ['items'],
+}
+
 interface GeminiClient {
   models: {
     generateContent(params: GenerateContentParameters): Promise<Pick<GenerateContentResponse, 'text'>>
@@ -121,6 +161,8 @@ interface GeminiProviderOptions {
   requestTimeoutMs?: number
   maxRetries?: number
   retryBaseDelayMs?: number
+  maxOutputTokens?: number
+  thinkingBudget?: number
   delay?: (ms: number) => Promise<void>
   random?: () => number
 }
@@ -217,7 +259,147 @@ function toFriendlyError(error: unknown): GeminiProviderError {
   return new GeminiProviderError('Gemini failed to generate a response. Please try again.', 'AI_UNKNOWN_FAILURE')
 }
 
-function parseItineraryJson(rawText: string): GenerateItineraryResponse {
+function timeBucket(startTime: string): 'morning' | 'afternoon' | 'evening' {
+  const hour = Number(startTime.slice(0, 2))
+  if (hour < 12) return 'morning'
+  if (hour < 17) return 'afternoon'
+  return 'evening'
+}
+
+function roadmapKind(type: string) {
+  if (type === 'ATTRACTION') return 'attraction' as const
+  if (type === 'RESTAURANT') return 'restaurant' as const
+  if (type === 'HOTEL') return 'hotel' as const
+  if (type === 'ACTIVITY') return 'activity' as const
+  return 'other' as const
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
+function compactCandidateCost(candidate: NonNullable<GenerateItineraryRequest['destinationContext']>['candidates'][number]): {
+  amount: number
+  confidence: 'KNOWN_PRICE' | 'ESTIMATED_PRICE' | 'PRICE_UNKNOWN'
+} {
+  const price = candidate.ticketPrice
+  if (!price || candidate.ticketPriceStatus !== 'VERIFIED') {
+    return { amount: 0, confidence: 'PRICE_UNKNOWN' }
+  }
+  if (price.priceType === 'FREE') return { amount: 0, confidence: 'KNOWN_PRICE' }
+  if (typeof price.amount === 'number') return { amount: price.amount, confidence: 'KNOWN_PRICE' }
+  if (typeof price.minAmount === 'number') return { amount: price.minAmount, confidence: 'KNOWN_PRICE' }
+  return { amount: 0, confidence: 'PRICE_UNKNOWN' }
+}
+
+function expandCompactItinerary(
+  compact: z.infer<typeof compactItinerarySchema>,
+  request: GenerateItineraryRequest
+): GenerateItineraryResponse {
+  const context = request.destinationContext
+  if (!context) {
+    throw new GeminiProviderError('Gemini returned compact itinerary JSON without destination context.', 'AI_INVALID_RESPONSE')
+  }
+
+  const candidates = new Map(context.candidates.map((candidate) => [candidate.id, candidate]))
+  const days = Array.from({ length: request.durationDays }, (_, index) => ({
+    dayNumber: index + 1,
+    theme: `${request.destination} day ${index + 1}`,
+    morning: [] as GenerateItineraryResponse['days'][number]['morning'],
+    afternoon: [] as GenerateItineraryResponse['days'][number]['afternoon'],
+    evening: [] as GenerateItineraryResponse['days'][number]['evening'],
+    dailyTotalLocal: 0,
+    dailyTotalUserCurrency: 0,
+    notes: [] as string[],
+  }))
+
+  for (const item of compact.items) {
+    const candidate = candidates.get(item.candidateId)
+    const day = days[item.day - 1] ?? {
+      dayNumber: item.day,
+      theme: `${request.destination} day ${item.day}`,
+      morning: [] as GenerateItineraryResponse['days'][number]['morning'],
+      afternoon: [] as GenerateItineraryResponse['days'][number]['afternoon'],
+      evening: [] as GenerateItineraryResponse['days'][number]['evening'],
+      dailyTotalLocal: 0,
+      dailyTotalUserCurrency: 0,
+      notes: [] as string[],
+    }
+    if (!days[item.day - 1]) days.push(day)
+
+    const cost = candidate ? compactCandidateCost(candidate) : { amount: 0, confidence: 'PRICE_UNKNOWN' as const }
+    const localAmount = roundMoney(cost.amount)
+    const userAmount = roundMoney(localAmount * request.exchangeRate)
+    const bucket = timeBucket(item.startTime)
+    day[bucket].push({
+      candidateId: item.candidateId,
+      time: item.startTime,
+      title: candidate?.name ?? item.candidateId,
+      description: item.reason,
+      location: candidate?.address ?? candidate?.name ?? item.candidateId,
+      latitude: candidate?.latitude ?? 0,
+      longitude: candidate?.longitude ?? 0,
+      transport: request.transportationPreference ?? 'Local transport',
+      estimatedDuration: `${item.durationMinutes} minutes`,
+      durationMinutes: item.durationMinutes,
+      reason: item.reason,
+      estimatedCostLocal: localAmount,
+      estimatedCostUserCurrency: userAmount,
+      currencyLocal: request.destinationCurrency,
+      currencyUser: request.userCurrency,
+      priceConfidence: cost.confidence,
+      tips: candidate?.openingHoursKnown ? [] : ['Verify current hours before visiting.'],
+    })
+    day.dailyTotalLocal = roundMoney(day.dailyTotalLocal + localAmount)
+    day.dailyTotalUserCurrency = roundMoney(day.dailyTotalUserCurrency + userAmount)
+  }
+
+  const estimatedTotalLocal = roundMoney(days.reduce((total, day) => total + day.dailyTotalLocal, 0))
+  const estimatedTotalUserCurrency = roundMoney(days.reduce((total, day) => total + day.dailyTotalUserCurrency, 0))
+  const totalBudgetUserCurrency = request.budgetSummary
+    ? Number(request.budgetSummary.total.userBudget?.amount ?? request.budget)
+    : request.budget
+
+  return {
+    title: `${request.destination} in ${request.durationDays} day${request.durationDays === 1 ? '' : 's'}`,
+    summary: `A compact ${request.durationDays}-day itinerary using vetted destination records from Roamly.`,
+    selectedFlightOfferId: request.travelOffersContext?.selectedFlightOfferId,
+    selectedHotelOfferId: request.travelOffersContext?.selectedHotelOfferId,
+    currencyLocal: request.destinationCurrency,
+    currencyUser: request.userCurrency,
+    exchangeRate: {
+      baseCurrency: request.destinationCurrency,
+      quoteCurrency: request.userCurrency,
+      rate: request.exchangeRate,
+      source: request.exchangeRateSource,
+      fetchedAt: request.exchangeRateFetchedAt,
+      fromCache: request.exchangeRateFromCache,
+    },
+    budget: {
+      totalBudgetUserCurrency,
+      estimatedTotalLocal,
+      estimatedTotalUserCurrency,
+      remainingBudgetUserCurrency: roundMoney(totalBudgetUserCurrency - estimatedTotalUserCurrency),
+      isBudgetExceeded: estimatedTotalUserCurrency > totalBudgetUserCurrency,
+    },
+    days,
+    roadmap: days.map((day) => ({
+      dayNumber: day.dayNumber,
+      items: [...day.morning, ...day.afternoon, ...day.evening]
+        .sort((first, second) => first.time.localeCompare(second.time))
+        .map((item) => {
+          const candidate = candidates.get(item.candidateId)
+          return {
+            label: item.title,
+            kind: candidate ? roadmapKind(candidate.type) : 'other',
+            time: item.time,
+          }
+        }),
+    })),
+  }
+}
+
+function parseItineraryJson(rawText: string, request: GenerateItineraryRequest): GenerateItineraryResponse {
   let parsed: unknown
   try {
     parsed = JSON.parse(rawText)
@@ -225,9 +407,14 @@ function parseItineraryJson(rawText: string): GenerateItineraryResponse {
     throw new GeminiProviderError('Gemini returned malformed itinerary JSON.', 'AI_INVALID_RESPONSE')
   }
 
-  const result = itinerarySchema.safeParse(parsed)
+  const compactResult = compactItinerarySchema.safeParse(parsed)
+  if (compactResult.success) {
+    return expandCompactItinerary(compactResult.data, request)
+  }
+
+  const result = richItinerarySchema.safeParse(parsed)
   if (!result.success) {
-    const issues = result.error.issues
+    const issues = [...compactResult.error.issues, ...result.error.issues]
       .slice(0, 8)
       .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
       .join('; ')
@@ -247,6 +434,8 @@ export class GeminiProvider implements AIProvider {
   private readonly requestTimeoutMs: number
   private readonly maxRetries: number
   private readonly retryBaseDelayMs: number
+  private readonly maxOutputTokens: number
+  private readonly thinkingBudget: number
   private readonly delay: (ms: number) => Promise<void>
   private readonly random: () => number
 
@@ -256,7 +445,7 @@ export class GeminiProvider implements AIProvider {
       throw new GeminiProviderError('Gemini API key is missing.')
     }
 
-    const model = options.model ?? process.env.GEMINI_MODEL
+    const model = options.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL
     if (!model) {
       throw new GeminiProviderError('Gemini model is missing.')
     }
@@ -267,12 +456,16 @@ export class GeminiProvider implements AIProvider {
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? readPositiveInteger(process.env.GEMINI_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)
     this.maxRetries = Math.min(
-      3,
+      1,
       options.maxRetries ?? readPositiveInteger(process.env.GEMINI_MAX_RETRIES, DEFAULT_MAX_RETRIES)
     )
     this.retryBaseDelayMs =
       options.retryBaseDelayMs ??
       readPositiveInteger(process.env.GEMINI_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_BASE_DELAY_MS)
+    this.maxOutputTokens =
+      options.maxOutputTokens ?? readPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+    this.thinkingBudget =
+      options.thinkingBudget ?? readInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_THINKING_BUDGET)
     this.delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.random = options.random ?? Math.random
   }
@@ -298,7 +491,7 @@ export class GeminiProvider implements AIProvider {
 
   async generateItinerary(request: GenerateItineraryRequest): Promise<GenerateItineraryResponse> {
     const rawText = await this.generateJson(buildItineraryPrompt(request))
-    return parseItineraryJson(rawText)
+    return parseItineraryJson(rawText, request)
   }
 
   private async sendPrompt(
@@ -310,9 +503,19 @@ export class GeminiProvider implements AIProvider {
       model: this.model,
       contents: prompt,
       config: {
-        temperature: 0.7,
+        temperature: 0.2,
+        maxOutputTokens: this.maxOutputTokens,
+        thinkingConfig: {
+          includeThoughts: false,
+          thinkingBudget: this.thinkingBudget,
+        },
         httpOptions: { timeout: this.requestTimeoutMs },
-        ...(jsonResponse ? { responseMimeType: 'application/json' } : {}),
+        ...(jsonResponse
+          ? {
+              responseMimeType: 'application/json',
+              responseJsonSchema: COMPACT_RESPONSE_JSON_SCHEMA,
+            }
+          : {}),
       },
     }
 
@@ -365,6 +568,12 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
   if (!value) return fallback
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function readInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) ? parsed : fallback
 }
 
 function retryDelayMs(

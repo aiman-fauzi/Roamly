@@ -26,6 +26,7 @@
 ### Recent Travel Knowledge and Planning Pipeline Work
 
 - Added destination import normalization, relevance filtering, durable destination facts, provenance, staleness, and database-grounded Gemini candidate validation.
+- Optimized itinerary generation for production latency by sending a compact Supabase-grounded candidate contract to Gemini, capping the default candidate set at 6, disabling Gemini thinking, limiting output tokens, and enriching compact candidate IDs server-side after validation.
 - Added provider-neutral flight and hotel offer contracts with deterministic mock providers, in-process offer caching, currency conversion, deterministic trip budgeting, and mocked travel-planning orchestration.
 - Added durable trip travel inputs with `TripTravelProfile`, sanitized `TripFlightSelection` and `TripHotelSelection` snapshots, and persisted `TripBudgetSnapshot` rows.
 - Added trip-scoped routes for travel-profile read/update, flight/hotel search using persisted inputs, offer selection, current selection reads, refresh, budget preview, and full planning.
@@ -88,10 +89,12 @@ Current unit coverage verifies questionnaire validation/serialization and range/
 | `npm run db:generate` | Passed | Prisma Client generated from `src/db/schema.prisma` |
 | `npm run typecheck` | Passed | `tsc --noEmit` |
 | `npm run lint` | Passed | 2 existing console warnings in destination audit files |
-| `npm run test` | Passed | 36 files, 171 tests |
+| `npm run test` | Passed | 37 files, 175 tests |
 | `npm run build` | Passed | Next.js 16.2.9 production build |
 | `npm audit --omit=dev` | Passed | Production dependency tree reports 0 vulnerabilities |
 | Local dev server | Passed | `http://localhost:3000/` returned HTTP 200 after elevated persistent launch |
+| Local production server | Passed | `next start -p 3210` returned HTTP 200 |
+| Live Gemini dry-run | Passed | Kuala Lumpur, 4 candidates, 2.8s provider latency, 4 valid items, 0 rejected/unknown/duplicate IDs |
 
 ---
 

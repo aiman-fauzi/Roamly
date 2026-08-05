@@ -35,18 +35,17 @@ describe('buildItineraryPrompt', () => {
     expect(prompt).toContain('Food Preferences:\nHalal, Local Cuisine, Street Food')
   })
 
-  it('includes currency, exchange-rate, budget, and rich JSON requirements', () => {
+  it('includes currency and compact JSON requirements', () => {
     const prompt = buildItineraryPrompt(baseRequest)
 
     expect(prompt).toContain('- User currency: MYR')
     expect(prompt).toContain('- Destination/local currency: JPY')
     expect(prompt).toContain('- Exchange rate: 1 JPY = 0.032 MYR')
-    expect(prompt).toContain('estimatedCostLocal')
-    expect(prompt).toContain('estimatedCostUserCurrency')
-    expect(prompt).toContain('dailyTotalLocal')
-    expect(prompt).toContain('dailyTotalUserCurrency')
-    expect(prompt).toContain('Grand total')
-    expect(prompt).toContain('roadmap')
+    expect(prompt).toContain('"items"')
+    expect(prompt).toContain('"candidateId":"supplied candidateId"')
+    expect(prompt).toContain('"startTime":"09:00"')
+    expect(prompt).not.toContain('estimatedCostLocal')
+    expect(prompt).not.toContain('"roadmap"')
   })
 
   it('does not include markdown code fences in the JSON output instructions', () => {
@@ -72,6 +71,7 @@ describe('buildItineraryPrompt', () => {
             id: 'ATTRACTION:central-market',
             type: 'ATTRACTION',
             name: 'Central Market',
+            address: 'Kuala Lumpur',
             latitude: 3.145,
             longitude: 101.695,
             categories: ['culture'],
@@ -100,14 +100,13 @@ describe('buildItineraryPrompt', () => {
     expect(prompt).toContain('Supplied Destination Candidates')
     expect(prompt).toContain('ATTRACTION:central-market')
     expect(prompt).toContain('Do not invent attractions')
-    expect(prompt).toContain('If openingHoursKnown is false')
-    expect(prompt).toContain('If staleFactCount is greater than 0')
-    expect(prompt).toContain('Prefer VERIFIED facts over STALE facts')
-    expect(prompt).toContain('"candidateId": "ATTRACTION:stable-id-from-candidates"')
-    expect(prompt).toContain('"openingHoursKnown": false')
-    expect(prompt).toContain('"openingHoursStatus": "UNKNOWN"')
-    expect(prompt).toContain('"ticketPriceStatus": "UNKNOWN"')
-    expect(prompt).toContain('"priceConfidence": "PRICE_UNKNOWN"')
-    expect(prompt).toContain('"lastVerifiedAt": "2026-08-04T00:00:00.000Z"')
+    expect(prompt).toContain('"candidateId":"ATTRACTION:central-market"')
+    expect(prompt).toContain('"entityType":"ATTRACTION"')
+    expect(prompt).toContain('"openingHoursStatus":"UNKNOWN"')
+    expect(prompt).toContain('"priceStatus":"UNKNOWN"')
+    expect(prompt).toContain('"priceConfidence":"PRICE_UNKNOWN"')
+    expect(prompt).not.toContain('"lastVerifiedAt"')
+    expect(prompt).not.toContain('"rankReasons"')
+    expect(prompt).not.toContain('"factSourceSummary"')
   })
 })

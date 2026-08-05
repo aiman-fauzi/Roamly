@@ -1089,6 +1089,11 @@ Remaining work before live provider integration:
 - `GEMINI_REQUEST_TIMEOUT_MS`
 - `GEMINI_MAX_RETRIES`
 - `GEMINI_RETRY_BASE_DELAY_MS`
+- `GEMINI_MAX_OUTPUT_TOKENS`
+- `GEMINI_THINKING_BUDGET`
+- `ITINERARY_MAX_CANDIDATES`
+- `ITINERARY_CONTEXT_BUDGET`
+- `AI_FALLBACK_PROVIDER`
 - `AI_PROVIDER`
 - `TRAVEL_OFFER_MODE`
 - `FLIGHT_PROVIDER`
@@ -1121,7 +1126,7 @@ npm run destinations:facts:import -- --file=data/verified-kl-facts.json --apply
 npm run destinations:audit -- --city="Kuala Lumpur"
 npm run enrich:destinations -- --batchSize=1 --sourceKey=controlled-kuala-lumpur-batch-1
 npm run itinerary:generate:dev -- --tripId=<trip-id> --maxCandidates=4 --dry-run --print-context-summary
-npm run itinerary:generate:dev -- --tripId=<trip-id> --maxCandidates=3 --persist
+npm run itinerary:generate:dev -- --tripId=<trip-id> --maxCandidates=6 --persist
 npx vitest --run src/services/travel src/lib/validations/__tests__/travelOfferValidation.test.ts "src/app/api/trips/[tripId]/flights/route.test.ts" "src/app/api/trips/[tripId]/plan/route.test.ts" "src/app/api/trips/[tripId]/travel-profile/route.test.ts" "src/app/api/trips/[tripId]/flights/select/route.test.ts" "src/app/api/trips/[tripId]/selections/route.test.ts"
 npx prisma validate --schema=src/db/schema.prisma
 npx prisma generate --schema=src/db/schema.prisma
@@ -1138,5 +1143,70 @@ npm run build
 - Destination entities still lack durable source ID/source URL/relevance-review columns outside `DestinationFact`; rejected/review counts are still reported in import job summaries and structured logs.
 - Active Kuala Lumpur activities remain below the 5-10 development target. Further expansion should stay source-policy approved and review-controlled.
 - Opening-hours and exact ticket-price coverage improved from 0%, but remain sparse at 3/55 and 2/55.
-- The final live Gemini dry-run on August 5, 2026 was rate-limited after the low retry budget. No retry was attempted after the rate-limit result, and the prior validated persisted itinerary remains saved and verified against active candidate records.
 - No broad production import has been run.
+
+## Itinerary Latency Optimization - 2026-08-05
+
+Production timeout reduction is implemented for the destination-grounded itinerary path.
+
+Previous generation shape:
+
+- Model default depended on `GEMINI_MODEL`; the documented value was `gemini-2.5-flash`.
+- Provider timeout was documented as 60000ms.
+- Gemini received up to 24 candidates and a 12000-character destination context budget.
+- Prompt context included larger destination records with source/provenance, ranking notes, descriptions, opening-hour arrays, and fact summaries.
+- Gemini returned the full enriched itinerary JSON, including titles, descriptions, coordinates, budget, costs, exchange rate, and roadmap.
+
+Current generation shape:
+
+- Default model is `gemini-2.5-flash`.
+- Provider timeout is 30000ms.
+- Retry budget is still one bounded retry for timeout, 429 with Retry-After, and transient 5xx only.
+- Temperature is 0.2.
+- Thinking is disabled/minimized with `GEMINI_THINKING_BUDGET=0` and `includeThoughts=false`.
+- Output is capped with `GEMINI_MAX_OUTPUT_TOKENS=1800`.
+- Default candidate limit is `ITINERARY_MAX_CANDIDATES=6`.
+- Default prompt context budget is `ITINERARY_CONTEXT_BUDGET=6000`.
+- Gemini receives only compact candidate fields: candidate ID, entity type, name, coordinates, short tags, opening-hour status, price status/value where verified, suggested duration, and cluster ID.
+- Gemini returns only `{ candidateId, day, startTime, durationMinutes, reason }`.
+- The backend enriches valid candidate IDs from Supabase metadata, calculates cost/budget fields, builds roadmap data, rejects unknown or duplicate IDs, and preserves the previous itinerary on provider or contract failure.
+- The API route exports `maxDuration = 60` and returns compact context size plus generation latency in response metadata.
+- Optional fallback architecture exists behind `AI_FALLBACK_PROVIDER`, disabled by default. `groq` remains a placeholder until a real adapter is installed.
+
+Validation completed before release:
+
+```text
+npm install: passed
+npx prisma validate --schema=src/db/schema.prisma: passed
+npx prisma generate --schema=src/db/schema.prisma: passed
+npx prisma migrate status --schema=src/db/schema.prisma: passed, 7 migrations, schema up to date
+npm run typecheck: passed
+npm run lint: passed with 2 existing destination-audit console warnings
+npm test: passed, 37 files, 175 tests
+npm run build: passed
+local production smoke: HTTP 200 on http://localhost:3210/
+```
+
+Controlled live Gemini dry-run:
+
+```text
+tripId: 68bd0b86-062c-4184-9004-f4eea00ee8fa
+destination: Kuala Lumpur
+model: gemini-2.5-flash
+maxCandidates: 4
+eligible candidates: 27
+candidates sent: 4
+candidate types: ATTRACTION=2, RESTAURANT=1, HOTEL=0, ACTIVITY=1
+known opening-hours count: 2
+known-price count: 2
+raw context size: 3804
+compact context size: 1634/6000
+provider response time: 2806ms
+service request latency: 2822ms
+items returned: 4
+valid items: 4
+rejected items: 0
+unknown candidate IDs: none
+duplicate candidate IDs: none
+persistence: DRY_RUN
+```

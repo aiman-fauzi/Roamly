@@ -13,13 +13,19 @@ Roamly is an AI-powered travel planning MVP built with Next.js, TypeScript, Tail
 ```env
 GEMINI_API_KEY="your-gemini-api-key"
 GEMINI_MODEL="gemini-2.5-flash"
-GEMINI_REQUEST_TIMEOUT_MS="60000"
+GEMINI_REQUEST_TIMEOUT_MS="30000"
 GEMINI_MAX_RETRIES="1"
 GEMINI_RETRY_BASE_DELAY_MS="750"
+GEMINI_MAX_OUTPUT_TOKENS="1800"
+GEMINI_THINKING_BUDGET="0"
+ITINERARY_MAX_CANDIDATES="6"
+ITINERARY_CONTEXT_BUDGET="6000"
+AI_FALLBACK_PROVIDER="disabled"
 AI_PROVIDER="gemini"
 ```
 
 Keep `GEMINI_API_KEY` server-side only. Do not expose it with a `NEXT_PUBLIC_` prefix.
+Keep `AI_FALLBACK_PROVIDER` disabled unless a real secondary adapter is configured; the `groq` key is a placeholder, not a live provider.
 
 ## Required Environment Variables
 
@@ -82,6 +88,8 @@ The offer cache is still in-process, provider-aware, keyed by normalized price-s
 Budget previews preserve original offer currencies, convert through the exchange-rate service, distinguish known/estimated/partial/unknown categories, and include assumptions plus missing-data warnings. Persisted planning stores `TripBudgetSnapshot` rows, supersedes previous current snapshots, links to selected offer snapshots when user-selected offers were used, and marks current budgets stale when selections expire or compatible profile fields change.
 
 The full planning route sends Gemini only compact offer summaries, selected offer IDs, the deterministic budget summary, and destination candidate IDs. Unknown destination candidate IDs or travel offer IDs are rejected before persistence.
+
+Standalone itinerary generation uses a compact Gemini contract for production latency: Roamly retrieves/ranks candidates from Supabase, sends at most `ITINERARY_MAX_CANDIDATES` candidates within `ITINERARY_CONTEXT_BUDGET`, asks Gemini for only `{ candidateId, day, startTime, durationMinutes, reason }`, then enriches the validated IDs with database metadata on the server. Gemini cannot browse, query Supabase directly, or invent unsupported destinations.
 
 ## Run Locally
 

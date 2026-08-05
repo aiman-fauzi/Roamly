@@ -15,8 +15,10 @@ const summary = {
   eligibleCandidates: 1,
   candidatesSent: 1,
   candidatesOmitted: 0,
+  contextRawSerializedSize: 1800,
   contextSerializedSize: 1000,
-  contextMaxSerializedSize: 12000,
+  contextMaxSerializedSize: 6000,
+  generationLatencyMs: 250,
   candidateIds: [{ id: 'ATTRACTION:central-market', type: 'ATTRACTION', name: 'Central Market', rankScore: 88 }],
   candidateTypeCounts: { ATTRACTION: 1, RESTAURANT: 0, HOTEL: 0, ACTIVITY: 0 },
   knownOpeningHoursCount: 0,
@@ -69,7 +71,7 @@ describe('dev itinerary generation runner', () => {
     expect(exitCode).toBe(0)
     expect(generate).toHaveBeenCalledWith({
       tripId: 'trip-1',
-      maxCandidates: 9,
+      maxCandidates: 6,
       persist: false,
     })
   })
@@ -93,7 +95,7 @@ describe('dev itinerary generation runner', () => {
     expect(exitCode).toBe(0)
     expect(generate).toHaveBeenCalledWith({
       tripId: 'trip-1',
-      maxCandidates: 9,
+      maxCandidates: 6,
       persist: true,
     })
   })

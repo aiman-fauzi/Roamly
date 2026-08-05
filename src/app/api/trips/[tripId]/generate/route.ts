@@ -15,6 +15,8 @@ interface RouteContext {
   params: Promise<{ tripId: string }>
 }
 
+export const maxDuration = 60
+
 function err(error: string, code: string, status: number, details?: unknown) {
   return NextResponse.json<ApiErrorResponse>({ error, code, details }, { status })
 }
@@ -42,6 +44,8 @@ export async function POST(_request: Request, { params }: RouteContext) {
         eligibleCandidates: result.summary.eligibleCandidates,
         candidatesSentToGemini: result.summary.candidatesSent,
         omittedCandidates: result.summary.candidatesOmitted,
+        contextSize: result.summary.contextSerializedSize,
+        generationLatencyMs: result.summary.generationLatencyMs,
       },
     })
   } catch (error) {

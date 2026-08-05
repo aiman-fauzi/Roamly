@@ -56,8 +56,10 @@ export interface ItineraryGenerationSummary {
   eligibleCandidates: number
   candidatesSent: number
   candidatesOmitted: number
+  contextRawSerializedSize: number
   contextSerializedSize: number
   contextMaxSerializedSize: number
+  generationLatencyMs: number
   candidateIds: Array<{
     id: string
     type: string
@@ -100,6 +102,8 @@ interface LoadedTrip {
 }
 
 const ACTIVE_GENERATION_TRIPS = new Set<string>()
+const DEFAULT_ITINERARY_MAX_CANDIDATES = 6
+const DEFAULT_ITINERARY_CONTEXT_BUDGET = 6_000
 
 function acquireGenerationLock(tripId: string): boolean {
   if (ACTIVE_GENERATION_TRIPS.has(tripId)) return false
@@ -176,6 +180,20 @@ function readBudgetLevel(travelStyles: string[]): string | undefined {
   if (travelStyles.includes('luxury')) return 'luxury'
   if (travelStyles.includes('budget')) return 'budget'
   return undefined
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function defaultMaxCandidates(): number {
+  return readPositiveInteger(process.env.ITINERARY_MAX_CANDIDATES, DEFAULT_ITINERARY_MAX_CANDIDATES)
+}
+
+function defaultContextBudget(): number {
+  return readPositiveInteger(process.env.ITINERARY_CONTEXT_BUDGET, DEFAULT_ITINERARY_CONTEXT_BUDGET)
 }
 
 function countItineraryItems(itinerary: GenerateItineraryResponse): number {
@@ -383,8 +401,8 @@ export class ItineraryGenerationService {
         limitPerType: 8,
       })
       const destinationContext = buildGeminiDestinationContext(destinationRetrieval, {
-        maxCandidates: options.maxCandidates ?? 24,
-        maxSerializedSize: 12_000,
+        maxCandidates: options.maxCandidates ?? defaultMaxCandidates(),
+        maxSerializedSize: defaultContextBudget(),
       })
 
       if (destinationContext.candidates.length === 0) {
@@ -408,8 +426,10 @@ export class ItineraryGenerationService {
         eligibleCandidates: destinationRetrieval.candidates.length,
         candidatesSent: destinationContext.candidates.length,
         candidatesOmitted: destinationContext.omittedCandidateCount,
+        contextRawSerializedSize: JSON.stringify(destinationContext).length,
         contextSerializedSize: destinationContext.serializedSize,
         contextMaxSerializedSize: destinationContext.maxSerializedSize,
+        generationLatencyMs: 0,
         candidateIds: destinationContext.candidates.map((candidate) => ({
           id: candidate.id,
           type: candidate.type,
@@ -444,7 +464,9 @@ export class ItineraryGenerationService {
       }
       let itinerary: GenerateItineraryResponse
       try {
+        const generationStartedAt = Date.now()
         itinerary = await this.dependencies.generateItinerary(request)
+        baseSummary.generationLatencyMs = Date.now() - generationStartedAt
       } catch (error) {
         if (error instanceof GeminiProviderError) {
           throw new ItineraryGenerationError(
