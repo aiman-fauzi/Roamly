@@ -7,11 +7,13 @@ import {
   TravelPlanningError,
   TripTravelPlanningService,
 } from '@/services/travel/planning/tripTravelPlanningService'
+import { TripTravelProfileService } from '@/services/travel/profile/tripTravelProfileService'
 import { getTripById } from '@/services/tripService'
 import { ensureUser } from '@/services/userService'
 
 const routeMocks = vi.hoisted(() => ({
   plan: vi.fn(),
+  upsertTravelProfile: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -40,6 +42,10 @@ vi.mock('@/services/travel/planning/tripTravelPlanningService', () => {
     TripTravelPlanningService: vi.fn(() => ({ plan: routeMocks.plan })),
   }
 })
+
+vi.mock('@/services/travel/profile/tripTravelProfileService', () => ({
+  TripTravelProfileService: vi.fn(() => ({ upsert: routeMocks.upsertTravelProfile })),
+}))
 
 vi.mock('@/services/userService', () => ({
   ensureUser: vi.fn(),
@@ -72,6 +78,11 @@ describe('trip travel planning route', () => {
     } as never)
     vi.mocked(ensureUser).mockResolvedValue({ id: 'user-1' } as never)
     vi.mocked(getTripById).mockResolvedValue({ id: 'trip-1', userId: 'user-1' } as never)
+    routeMocks.upsertTravelProfile.mockResolvedValue({
+      travelProfile: { id: 'travel-profile-1' },
+      readiness: { canSearchOffers: true },
+      invalidated: [],
+    })
     routeMocks.plan.mockResolvedValue({
       trip: { id: 'trip-1' },
       itinerary: {
@@ -100,6 +111,19 @@ describe('trip travel planning route', () => {
     const body = await response.json()
 
     expect(response.status).toBe(200)
+    expect(TripTravelProfileService).toHaveBeenCalledTimes(1)
+    expect(routeMocks.upsertTravelProfile).toHaveBeenCalledWith({
+      tripId: 'trip-1',
+      userId: 'user-1',
+      data: expect.objectContaining({
+        originAirportCode: 'KUL',
+        departureDate: '2026-09-01',
+        adults: 2,
+        rooms: 1,
+        currency: 'MYR',
+      }),
+      hasCompleteItinerary: false,
+    })
     expect(TripTravelPlanningService).toHaveBeenCalledTimes(1)
     expect(routeMocks.plan).toHaveBeenCalledWith({
       tripId: 'trip-1',

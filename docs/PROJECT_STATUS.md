@@ -9,7 +9,7 @@ Last updated: 2026-08-05
 - Prisma Client generation: passed
 - TypeScript: passed
 - Lint: passed with 2 existing console warnings in the audit CLI/test
-- Tests: passed, 30 files / 153 tests
+- Tests: passed, 36 files / 171 tests
 - Production build: passed
 - Local app smoke test: HTTP 200
 
@@ -17,7 +17,7 @@ Last updated: 2026-08-05
 
 No migration reconciliation was required.
 
-All six local migrations are recorded as successfully applied in the live Supabase database, and database checksums match the local migration files:
+All seven local migrations are recorded as successfully applied in the live Supabase database, and database checksums match the local migration files:
 
 - `20260702124223_add_multiselect_preferences`
 - `20260703000000_onboarding_profile_exchange_rates`
@@ -25,6 +25,7 @@ All six local migrations are recorded as successfully applied in the live Supaba
 - `20260707010000_destination_import_engine`
 - `20260707020000_destination_ai_enrichment`
 - `20260804010000_durable_destination_facts`
+- `20260805012942_durable_trip_travel_persistence`
 
 Do not run `prisma migrate reset`, `prisma db push`, or `prisma migrate resolve` for the current state.
 
@@ -878,9 +879,9 @@ destination_enrichment_jobs: 2
 
 Invalid provider responses are covered by mock-based tests. If every destination in a batch fails validation or provider generation, the enrichment job is marked `FAILED`.
 
-## Travel Offers and Trip Budget Foundation
+## Durable Trip Travel Planning
 
-The travel-offer layer is provider-neutral and currently runs in deterministic mock mode only. No live provider credentials were added, and no airline, OTA, or commercial booking result pages are scraped.
+The travel-offer layer is provider-neutral and currently runs in deterministic mock mode only. No live provider credentials were added, and no airline, OTA, or commercial booking result pages are scraped. This pass added durable trip travel inputs, selected-offer snapshots, and budget snapshots while keeping live provider offers short-lived.
 
 Core modules:
 
@@ -892,8 +893,41 @@ src/services/travel/offers/travelOfferService.ts
 src/services/travel/offers/selection.ts
 src/services/travel/offers/money.ts
 src/services/travel/budget/tripBudgetService.ts
+src/services/travel/profile/tripTravelProfileService.ts
+src/services/travel/profile/tripTravelSearchRequestService.ts
+src/services/travel/persistence/tripOfferSelectionService.ts
+src/services/travel/persistence/tripBudgetSnapshotService.ts
 src/services/travel/planning/tripTravelPlanningService.ts
 ```
+
+Persistence audit summary:
+
+- `Trip` previously persisted only ownership, title, status, and `itineraryJson`.
+- `PreferenceSet` persisted questionnaire destination, rough budget, group size, duration, style, food, lodging, transport, and activity preferences.
+- Profile-level preferred currency existed, but travel logistics were not trip-specific.
+- Origin airport, destination airport, dates, traveler breakdown, room count, cabin class, nonstop preference, selected offers, offer search timestamps, and budget results were request-only or in memory and would be lost after restart.
+- Existing trips are left valid; unknown logistics remain nullable and read as `ACTION_REQUIRED`.
+
+Additive migration:
+
+```text
+20260805012942_durable_trip_travel_persistence
+```
+
+New models and enums:
+
+- `TripTravelProfile`: one row per trip for origin/destination airport codes, dates, adults, children, infants, rooms, cabin class, nonstop preference, currency, and flight/hotel selection strategies.
+- `TripFlightSelection` and `TripHotelSelection`: sanitized durable snapshots of user-selected offers, with price, conversion, fetched/expiry timestamps, search fingerprint, summary JSON, and status.
+- `TripBudgetSnapshot`: persisted budget category JSON, totals, assumptions, missing-data warnings, current/superseded/stale/incomplete status, and optional links to selected offer snapshots.
+- Enums: `TravelCabinClass`, `FlightSelectionStrategy`, `HotelSelectionStrategy`, `TripOfferSelectionStatus`, `TripOfferSelectionSource`, and `TripBudgetSnapshotStatus`.
+
+Migration and backfill behavior:
+
+- Additive only; no existing trip, questionnaire, destination, or itinerary rows are rewritten.
+- Existing trip profiles are created only when users or APIs provide explicit inputs.
+- Preferred currency falls back from `Profile.preferredCurrency` at read/build time unless a trip-specific currency has been saved.
+- Airport codes, dates, and traveler breakdowns are never invented from ambiguous questionnaire answers.
+- Rollback is standard additive rollback by dropping the new tables/enums after ensuring no code path depends on them. Data-loss risk for existing rows is low because no existing columns were changed.
 
 Provider contracts:
 
@@ -902,15 +936,38 @@ Provider contracts:
 - Application domain offer types keep provider IDs and normalized prices, but provider-specific raw payloads are not passed into Gemini.
 - Mock providers have no network access and return reproducible direct/connecting flight offers, refundable/non-refundable hotel offers, taxes, totals, expiration timestamps, empty-result mode, rate-limit simulation, and temporary-failure simulation.
 
+Validation rules:
+
+- Date-only strings use `YYYY-MM-DD` calendar validation and UTC-midnight serialization to avoid timezone drift.
+- `adults >= 1`, `children >= 0`, `infants >= 0`, `rooms >= 1`.
+- `infants <= adults`.
+- Total travelers are capped by `MAX_TRAVELERS_PER_TRIP` (default `18`).
+- Rooms cannot exceed total travelers unless `ALLOW_ROOMS_GREATER_THAN_TRAVELERS=true`.
+- Persisted travel profiles require return date after departure date when both are present.
+- Provider adapters can add stricter provider-specific limits later, but the core domain validation avoids provider-specific assumptions.
+
 Offer cache:
 
-- In-process cache, no migration added.
+- Interface-backed in-process implementation; no durable offer-cache migration was added in this pass.
 - Provider-aware deterministic SHA-256 fingerprint.
 - Flight keys include origin, destination, dates, travelers, cabin class, currency, nonstop flag, provider, and simulation mode.
 - Hotel keys include city, dates, travelers, rooms, currency, provider, itinerary center when supplied, and simulation mode.
 - Cache entries include `fetchedAt`, `expiresAt`, and `cacheStatus`.
 - Expired entries are not returned as current. Explicit refresh bypasses the current entry.
 - Concurrent identical searches share one pending load.
+- Payloads are size-limited by `TRAVEL_OFFER_CACHE_MAX_PAYLOAD_BYTES` (default `256000`).
+- Limitation: memory cache is lost on process restart and not shared across serverless instances. A future database or external cache can implement the same store interface.
+
+Selected-offer snapshot semantics:
+
+- A selection snapshot records what the user selected at a point in time; it does not guarantee current availability.
+- Snapshots do not store booking tokens, provider credentials, private deep-link parameters, or raw provider payloads.
+- `SELECTED` is the only current user-selected status. `EXPIRED`, `REPLACED`, and `INVALIDATED` rows remain auditable history.
+- Re-selecting the same current offer is idempotent.
+- Selecting a new flight or hotel marks the prior current selection as `REPLACED` in a transaction.
+- Updating incompatible travel-profile fields marks current selections `INVALIDATED` and current budget snapshots `STALE`.
+- Reading selections marks expired current snapshots `EXPIRED` and stales the current budget snapshot.
+- Booking must later require live provider revalidation.
 
 Budget engine:
 
@@ -920,6 +977,8 @@ Budget engine:
 - Food, local transport, and contingency are deterministic estimates from configuration.
 - Money arithmetic uses integer minor units and preserves original provider currency plus the exchange rate used for conversion.
 - Whole-trip and per-person totals are returned with assumptions and missing-data warnings.
+- Persisted planning creates a `TripBudgetSnapshot` and marks the prior current snapshot `SUPERSEDED`.
+- Current budget snapshots become `STALE` when selected offers expire, are replaced, or are invalidated by travel-profile changes.
 
 Offer selection:
 
@@ -930,18 +989,34 @@ hotels: CHEAPEST, REFUNDABLE, NEAREST_TO_ITINERARY, BEST_VALUE
 
 Hotel proximity uses the existing Haversine helper. No road travel time is calculated without a routing provider.
 
+Planning state behavior:
+
+```text
+ACTION_REQUIRED -> missing required profile fields
+READY_FOR_SEARCH -> profile has search fields but no current selected flight+hotel
+OFFERS_SELECTED -> current flight and hotel snapshots are selected
+COMPLETE -> existing completed itinerary is present
+```
+
+`TripStatus` remains `DRAFT`/`COMPLETE`; no database enum expansion was needed. Planning responses also distinguish `flightSelectionSource` and `hotelSelectionSource` as `USER_SELECTED`, `SYSTEM_RECOMMENDED`, or `NOT_SELECTED`. System-ranked offers can be used for budget previews or itinerary context, but they are not persisted as user selections.
+
 Gemini contract:
 
 - Gemini receives compact `flightOffers`, `hotelOffers`, selected offer IDs, destination candidates, and a deterministic budget summary.
-- Gemini may reference only supplied `selectedFlightOfferId`, `selectedHotelOfferId`, and destination `candidateId` values.
+- Gemini may reference only supplied selected/system offer IDs and destination `candidateId` values.
 - Unknown destination candidate IDs or offer IDs are rejected before persistence.
 - The prior itinerary is preserved on provider failures, Gemini failures, contract violations, or selection errors.
 
 Trip-scoped API routes:
 
 ```text
+GET  /api/trips/[tripId]/travel-profile
+PUT  /api/trips/[tripId]/travel-profile
 POST /api/trips/[tripId]/flights
 POST /api/trips/[tripId]/hotels
+POST /api/trips/[tripId]/flights/select
+POST /api/trips/[tripId]/hotels/select
+GET  /api/trips/[tripId]/selections
 POST /api/trips/[tripId]/offers/refresh
 POST /api/trips/[tripId]/budget
 POST /api/trips/[tripId]/plan
@@ -949,21 +1024,33 @@ POST /api/trips/[tripId]/plan
 
 All routes require authentication and trip ownership. They validate input with Zod, return sanitized errors, categorize provider failures, and avoid raw provider payload or secret leakage.
 
+Request/response contract:
+
+- Search, budget, refresh, and plan routes use the saved `TripTravelProfile` plus optional safe overrides.
+- Overrides update the travel profile first, then downstream services build requests from the persisted profile to avoid multiple sources of truth.
+- Travel-profile responses include `currencySource`, `planningStatus`, `missingRequiredFields`, `canSearchOffers`, `canSelectOffers`, and `canGenerateItinerary`.
+- Offer result responses include `expiresAt`, `cacheStatus`, `requestFingerprint`, and provider-neutral offer summaries.
+- Selection responses include selected snapshot IDs, `selectionSource`, `isExpired`, and `requiresRefresh`.
+- Budget responses preserve category statuses and missing-data warnings; persisted planning can include a `budgetSnapshot`.
+
 Frontend response boundary:
 
 - Flight offer cards can use `offers`, `cacheStatus`, `fetchedAt`, `expiresAt`, `totalPrice`, `baggage`, `refundable`, and itinerary segment summaries.
 - Hotel offer cards can use `propertyName`, `roomName`, `boardType`, `refundable`, `totalPrice`, `distanceFromItineraryCenterKm`, `fetchedAt`, and `expiresAt`.
 - Budget UI can use `budgetSummary` categories, `assumptions`, `missingData`, `remainingBudget`, and `isBudgetExceeded`.
+- Travel-profile UI can use readiness flags and missing-field names directly.
+- Selection UI can use `requiresRefresh` and `isExpired` for expiry badges and refresh prompts.
 - Refresh UI can call `/offers/refresh` and use `cacheStatus: REFRESHED`.
 - Retry UI can inspect route error codes such as `FLIGHT_RATE_LIMITED`, `HOTEL_TEMPORARY_FAILURE`, `TRAVEL_PLANNING_IN_PROGRESS`, and `AI_TRAVEL_OFFER_CONTRACT_VIOLATION`.
 
-Controlled mock orchestration result:
+Controlled persisted mock-flow result:
 
 ```text
+travel profile saved: KUL -> KIX, 2026-09-01 to 2026-09-05, 2 adults, 1 room, economy, MYR
 flight offers returned: 2
 hotel offers returned: 2
-selected flight: direct mock flight
-selected hotel: Mock Flexible Suites
+flight selection snapshot: direct mock flight, USER_SELECTED, current
+hotel selection snapshot: Mock Flexible Suites, USER_SELECTED, current
 flight total: 840.00 MYR
 hotel total: 520.00 MYR
 known attraction cost: 20.00 MYR
@@ -972,8 +1059,11 @@ unknown categories: none
 contingency: 182.00 MYR
 whole-trip total: 2002.00 MYR
 per-person total: 1001.00 MYR
+budget snapshot: CURRENT after calculation, prior current snapshots SUPERSEDED
 candidates sent to Gemini: 1
 valid itinerary items: 1
+historical selections: retained after replacement/expiry/invalidation
+superseded budget snapshots: retained for audit
 ```
 
 Remaining work before live provider integration:
@@ -981,9 +1071,10 @@ Remaining work before live provider integration:
 - Select official flight and hotel APIs and review their terms.
 - Add provider-specific adapters behind the existing interfaces.
 - Add server-side credential configuration and rotation guidance.
-- Decide whether offer caching should remain in-process or move to an additive durable/edge cache.
+- Decide whether offer caching should remain in-process or move to an additive durable/edge cache before serverless production use.
 - Add live-provider contract tests with recorded/sanitized fixtures.
 - Add UI offer cards, expiry indicators, refresh action, and budget breakdown screens.
+- Add booking revalidation and handoff flows; current selections are auditable snapshots only.
 
 ## Required Environment Variables
 
@@ -1004,6 +1095,9 @@ Remaining work before live provider integration:
 - `HOTEL_PROVIDER`
 - `FLIGHT_OFFER_CACHE_TTL_SECONDS`
 - `HOTEL_OFFER_CACHE_TTL_SECONDS`
+- `TRAVEL_OFFER_CACHE_MAX_PAYLOAD_BYTES`
+- `MAX_TRAVELERS_PER_TRIP`
+- `ALLOW_ROOMS_GREATER_THAN_TRAVELERS`
 - `TRIP_BUDGET_CONTINGENCY_PERCENT`
 - `DEFAULT_DAILY_FOOD_BUDGET`
 - `DEFAULT_DAILY_LOCAL_TRANSPORT_BUDGET`
@@ -1028,7 +1122,7 @@ npm run destinations:audit -- --city="Kuala Lumpur"
 npm run enrich:destinations -- --batchSize=1 --sourceKey=controlled-kuala-lumpur-batch-1
 npm run itinerary:generate:dev -- --tripId=<trip-id> --maxCandidates=4 --dry-run --print-context-summary
 npm run itinerary:generate:dev -- --tripId=<trip-id> --maxCandidates=3 --persist
-npx vitest --run src/services/travel src/lib/validations/__tests__/travelOfferValidation.test.ts "src/app/api/trips/[tripId]/flights/route.test.ts" "src/app/api/trips/[tripId]/plan/route.test.ts"
+npx vitest --run src/services/travel src/lib/validations/__tests__/travelOfferValidation.test.ts "src/app/api/trips/[tripId]/flights/route.test.ts" "src/app/api/trips/[tripId]/plan/route.test.ts" "src/app/api/trips/[tripId]/travel-profile/route.test.ts" "src/app/api/trips/[tripId]/flights/select/route.test.ts" "src/app/api/trips/[tripId]/selections/route.test.ts"
 npx prisma validate --schema=src/db/schema.prisma
 npx prisma generate --schema=src/db/schema.prisma
 npm run typecheck

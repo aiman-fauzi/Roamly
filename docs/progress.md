@@ -2,7 +2,7 @@
 
 > **Project:** Roamly - AI-Powered Travel Planning SaaS
 > **Tagline:** Plan Less. Explore More.
-> **Last Updated:** 2026-07-01
+> **Last Updated:** 2026-08-05
 > **Stack:** Next.js 16, TypeScript, Tailwind CSS, Supabase, Prisma, Google Gemini
 
 ---
@@ -22,6 +22,14 @@
 ---
 
 ## Completed In This Pass
+
+### Recent Travel Knowledge and Planning Pipeline Work
+
+- Added destination import normalization, relevance filtering, durable destination facts, provenance, staleness, and database-grounded Gemini candidate validation.
+- Added provider-neutral flight and hotel offer contracts with deterministic mock providers, in-process offer caching, currency conversion, deterministic trip budgeting, and mocked travel-planning orchestration.
+- Added durable trip travel inputs with `TripTravelProfile`, sanitized `TripFlightSelection` and `TripHotelSelection` snapshots, and persisted `TripBudgetSnapshot` rows.
+- Added trip-scoped routes for travel-profile read/update, flight/hotel search using persisted inputs, offer selection, current selection reads, refresh, budget preview, and full planning.
+- Added validation and tests for date-only handling, traveler/room rules, selection expiry/idempotency/replacement, budget snapshot superseding, persisted profile planning, and route ownership/delegation.
 
 ### Setup and Compatibility
 
@@ -79,8 +87,8 @@ Current unit coverage verifies questionnaire validation/serialization and range/
 |---------|--------|-------|
 | `npm run db:generate` | Passed | Prisma Client generated from `src/db/schema.prisma` |
 | `npm run typecheck` | Passed | `tsc --noEmit` |
-| `npm run lint` | Passed | No ESLint warnings or errors |
-| `npm run test` | Passed | 2 files, 6 tests; Vitest must run outside the sandbox in this workspace |
+| `npm run lint` | Passed | 2 existing console warnings in destination audit files |
+| `npm run test` | Passed | 36 files, 171 tests |
 | `npm run build` | Passed | Next.js 16.2.9 production build |
 | `npm audit --omit=dev` | Passed | Production dependency tree reports 0 vulnerabilities |
 | Local dev server | Passed | `http://localhost:3000/` returned HTTP 200 after elevated persistent launch |

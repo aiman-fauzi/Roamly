@@ -1,8 +1,13 @@
+import type { TripFlightSelection, TripHotelSelection, TripTravelProfile } from '@prisma/client'
+
 import { generateItinerary } from '@/ai/aiService'
 import { GeminiProviderError } from '@/ai/providers/GeminiProvider'
 import type { GenerateItineraryRequest, GenerateItineraryResponse } from '@/ai/types'
 import { prisma } from '@/db/client'
-import type { TripTravelPlanningRequestInput } from '@/lib/validations/travelOfferValidation'
+import type {
+  PersistedTripTravelPlanningRequestInput,
+  TripTravelPlanningRequestInput,
+} from '@/lib/validations/travelOfferValidation'
 import {
   DestinationRetrievalService,
   resolveDestinationCity,
@@ -49,6 +54,9 @@ import type {
   TravelOfferResultStatus,
   TravelOffersGeminiContext,
 } from '@/services/travel/offers/types'
+import { TripBudgetSnapshotService } from '@/services/travel/persistence/tripBudgetSnapshotService'
+import type { TripBudgetSnapshotResponse } from '@/services/travel/persistence/tripBudgetSnapshotService'
+import { dateToDateOnly } from '@/services/travel/profile/tripTravelProfileService'
 import { getTripById, TripStatus, updateTripStatus } from '@/services/tripService'
 import type { PreferenceSet, Trip } from '@/types/trip'
 
@@ -108,6 +116,15 @@ interface TripTravelPlanningDependencies {
   }) => Promise<ExchangeRateResult>
   travelOfferService?: TravelOfferSearchService
   calculateBudget?: (input: TripBudgetInput) => Promise<TripBudgetSummary>
+  getTravelProfile?: (tripId: string) => Promise<TripTravelProfile | null>
+  getCurrentFlightSelection?: (tripId: string) => Promise<TripFlightSelection | null>
+  getCurrentHotelSelection?: (tripId: string) => Promise<TripHotelSelection | null>
+  persistBudgetSnapshot?: (input: {
+    tripId: string
+    budgetSummary: TripBudgetSummary
+    selectedFlightSnapshotId?: string | null
+    selectedHotelSnapshotId?: string | null
+  }) => Promise<TripBudgetSnapshotResponse>
   generateItinerary?: (request: GenerateItineraryRequest) => Promise<GenerateItineraryResponse>
   persistTrip?: (tripId: string, status: TripStatus, itineraryJson: object) => Promise<Trip>
 }
@@ -130,6 +147,15 @@ interface TripTravelPlanningDependencySet {
   }) => Promise<ExchangeRateResult>
   travelOfferService: TravelOfferSearchService
   calculateBudget: (input: TripBudgetInput) => Promise<TripBudgetSummary>
+  getTravelProfile: (tripId: string) => Promise<TripTravelProfile | null>
+  getCurrentFlightSelection: (tripId: string) => Promise<TripFlightSelection | null>
+  getCurrentHotelSelection: (tripId: string) => Promise<TripHotelSelection | null>
+  persistBudgetSnapshot: (input: {
+    tripId: string
+    budgetSummary: TripBudgetSummary
+    selectedFlightSnapshotId?: string | null
+    selectedHotelSnapshotId?: string | null
+  }) => Promise<TripBudgetSnapshotResponse>
   generateItinerary: (request: GenerateItineraryRequest) => Promise<GenerateItineraryResponse>
   persistTrip: (tripId: string, status: TripStatus, itineraryJson: object) => Promise<Trip>
 }
@@ -137,7 +163,7 @@ interface TripTravelPlanningDependencySet {
 export interface TripTravelPlanningOptions {
   tripId: string
   userId?: string
-  input: TripTravelPlanningRequestInput
+  input: PersistedTripTravelPlanningRequestInput | TripTravelPlanningRequestInput
 }
 
 export interface TripTravelPlanningSummary {
@@ -162,6 +188,10 @@ export interface TripTravelPlanningSummary {
   hotelCacheStatus?: string
   selectedFlightOfferId?: string
   selectedHotelOfferId?: string
+  selectedFlightSnapshotId?: string
+  selectedHotelSnapshotId?: string
+  flightSelectionSource: 'USER_SELECTED' | 'SYSTEM_RECOMMENDED' | 'NOT_SELECTED'
+  hotelSelectionSource: 'USER_SELECTED' | 'SYSTEM_RECOMMENDED' | 'NOT_SELECTED'
   flightTotal?: FlightOffer['totalPrice']
   hotelTotal?: HotelOffer['totalPrice']
   eligibleCandidates: number
@@ -190,6 +220,7 @@ export interface TripTravelPlanningPreviewResult {
   selectedFlightOffer: RankedFlightOffer
   selectedHotelOffer: RankedHotelOffer
   budgetSummary: TripBudgetSummary
+  budgetSnapshot?: TripBudgetSnapshotResponse
   destinationCity: DestinationCityResolution
   destinationRetrieval: DestinationRetrievalResult
   destinationContext: GeminiDestinationContext
@@ -313,6 +344,64 @@ function addDays(date: string, days: number): string {
 
 function inferDestinationAirport(city: DestinationCityResolution): string | undefined {
   return DESTINATION_AIRPORTS[`${city.countrySlug}:${city.slug}`]
+}
+
+function planningInputValue<T>(
+  inputValue: T | undefined,
+  profileValue: T | null | undefined,
+  fallback?: T
+): T | undefined {
+  return inputValue ?? profileValue ?? fallback
+}
+
+function planningDateValue(
+  inputValue: string | undefined,
+  profileValue: Date | null | undefined,
+  fallback?: string
+): string | undefined {
+  return inputValue ?? dateToDateOnly(profileValue) ?? fallback
+}
+
+function requirePlanningField(value: string | undefined, field: string, trip: LoadedTrip): string {
+  if (value) return value
+  throw new TravelPlanningError(
+    'TRAVEL_PROFILE_INCOMPLETE',
+    'Travel profile is missing fields required for planning.',
+    400,
+    recoverableDetails({
+      category: 'INCOMPLETE_LOGISTICS',
+      previousItineraryPreserved: previousItineraryPreserved(trip),
+      details: { missingRequiredFields: [field] },
+    })
+  )
+}
+
+function usableFlightSelection(
+  selection: TripFlightSelection | null,
+  result: FlightSearchResult,
+  rankedOffers: RankedFlightOffer[],
+  now: Date
+): RankedFlightOffer | null {
+  if (!selection || selection.status !== 'SELECTED') return null
+  if (selection.providerExpiresAt && selection.providerExpiresAt <= now) return null
+  if (selection.searchFingerprint !== result.requestFingerprint) return null
+  return rankedOffers.find(
+    (offer) => offer.provider === selection.providerKey && offer.providerOfferId === selection.providerOfferId
+  ) ?? null
+}
+
+function usableHotelSelection(
+  selection: TripHotelSelection | null,
+  result: HotelSearchResult,
+  rankedOffers: RankedHotelOffer[],
+  now: Date
+): RankedHotelOffer | null {
+  if (!selection || selection.status !== 'SELECTED') return null
+  if (selection.providerExpiresAt && selection.providerExpiresAt <= now) return null
+  if (selection.searchFingerprint !== result.requestFingerprint) return null
+  return rankedOffers.find(
+    (offer) => offer.provider === selection.providerKey && offer.id === selection.providerOfferId
+  ) ?? null
 }
 
 function candidateTypeCounts(context: GeminiDestinationContext): Record<DestinationEntityType, number> {
@@ -486,6 +575,10 @@ interface PreparedTravelPlanningContext extends TripTravelPlanningPreviewResult 
   exchangeRate: ExchangeRateResult
   flightRequest: FlightSearchRequest
   hotelRequest: HotelSearchRequest
+  selectedFlightSnapshotId?: string
+  selectedHotelSnapshotId?: string
+  flightSelectionSource: 'USER_SELECTED' | 'SYSTEM_RECOMMENDED'
+  hotelSelectionSource: 'USER_SELECTED' | 'SYSTEM_RECOMMENDED'
 }
 
 export class TripTravelPlanningService {
@@ -506,6 +599,26 @@ export class TripTravelPlanningService {
       calculateBudget:
         dependencies.calculateBudget ??
         ((input) => new TripBudgetService({ resolveRate }).calculate(input)),
+      getTravelProfile:
+        dependencies.getTravelProfile ??
+        ((tripId) => prisma.tripTravelProfile.findUnique({ where: { tripId } })),
+      getCurrentFlightSelection:
+        dependencies.getCurrentFlightSelection ??
+        ((tripId) =>
+          prisma.tripFlightSelection.findFirst({
+            where: { tripId, status: 'SELECTED' },
+            orderBy: { selectedAt: 'desc' },
+          })),
+      getCurrentHotelSelection:
+        dependencies.getCurrentHotelSelection ??
+        ((tripId) =>
+          prisma.tripHotelSelection.findFirst({
+            where: { tripId, status: 'SELECTED' },
+            orderBy: { selectedAt: 'desc' },
+          })),
+      persistBudgetSnapshot:
+        dependencies.persistBudgetSnapshot ??
+        ((input) => new TripBudgetSnapshotService().createCurrent(input)),
       generateItinerary: dependencies.generateItinerary ?? generateItinerary,
       persistTrip: dependencies.persistTrip ?? updateTripStatus,
     }
@@ -676,28 +789,55 @@ export class TripTravelPlanningService {
       )
     }
 
-    const destinationAirportCode = options.input.destinationAirportCode ?? inferDestinationAirport(destinationCity)
-    if (!destinationAirportCode) {
-      throw new TravelPlanningError(
-        'DESTINATION_AIRPORT_REQUIRED',
-        'Destination airport code is required for this city.',
-        400,
-        recoverableDetails({
-          category: 'INCOMPLETE_LOGISTICS',
-          previousItineraryPreserved: previousItineraryPreserved(trip),
-        })
-      )
-    }
+    const persistedTravelProfile = await this.dependencies.getTravelProfile(options.tripId)
+    const destinationAirportCode = requirePlanningField(
+      planningInputValue(
+        options.input.destinationAirportCode,
+        persistedTravelProfile?.destinationAirportCode,
+        inferDestinationAirport(destinationCity)
+      ),
+      'destinationAirportCode',
+      trip
+    )
 
-    const currency = options.input.currency ?? profile.preferredCurrency
-    const travelerCount = Math.max(1, (options.input.adults ?? preferences.groupSize) + (options.input.children ?? 0))
-    const rooms = options.input.rooms ?? Math.max(1, Math.ceil(travelerCount / 2))
-    const checkInDate = options.input.checkInDate ?? options.input.departureDate
-    const checkOutDate =
+    const originAirportCode = requirePlanningField(
+      planningInputValue(options.input.originAirportCode, persistedTravelProfile?.originAirportCode),
+      'originAirportCode',
+      trip
+    )
+    const departureDate = requirePlanningField(
+      planningDateValue(options.input.departureDate, persistedTravelProfile?.departureDate),
+      'departureDate',
+      trip
+    )
+    const currency = requirePlanningField(
+      planningInputValue(options.input.currency, persistedTravelProfile?.currency, profile.preferredCurrency),
+      'currency',
+      trip
+    )
+    const adults = planningInputValue(options.input.adults, persistedTravelProfile?.adults, preferences.groupSize) ?? 1
+    const children = planningInputValue(options.input.children, persistedTravelProfile?.children, 0) ?? 0
+    const infants = planningInputValue(options.input.infants, persistedTravelProfile?.infants, 0) ?? 0
+    const travelerCount = Math.max(1, adults + children + infants)
+    const rooms =
+      planningInputValue(options.input.rooms, persistedTravelProfile?.rooms) ??
+      Math.max(1, Math.ceil(Math.max(1, adults + children) / 2))
+    const checkInDate = options.input.checkInDate ?? departureDate
+    const checkOutDate: string =
       options.input.checkOutDate ??
-      options.input.returnDate ??
-      addDays(options.input.departureDate, preferences.durationDays)
-    const returnDate = options.input.returnDate ?? checkOutDate
+      planningDateValue(options.input.returnDate, persistedTravelProfile?.returnDate) ??
+      addDays(departureDate, preferences.durationDays)
+    const returnDate = requirePlanningField(
+      planningDateValue(options.input.returnDate, persistedTravelProfile?.returnDate, checkOutDate),
+      'returnDate',
+      trip
+    )
+    const cabinClass = options.input.cabinClass ?? persistedTravelProfile?.cabinClass ?? 'ECONOMY'
+    const nonStopOnly = options.input.nonStopOnly ?? persistedTravelProfile?.nonStopOnly ?? false
+    const flightSelectionStrategy =
+      options.input.flightSelectionStrategy ?? persistedTravelProfile?.flightSelectionStrategy ?? 'BEST_VALUE'
+    const hotelSelectionStrategy =
+      options.input.hotelSelectionStrategy ?? persistedTravelProfile?.hotelSelectionStrategy ?? 'BEST_VALUE'
     const destinationCurrency =
       destinationCity.currencyCode ?? inferDestinationCurrency(preferences.destination, currency)
     const exchangeRate = await this.dependencies.resolveExchangeRate({
@@ -735,24 +875,24 @@ export class TripTravelPlanningService {
 
     const itineraryCenter = compactCandidateCenter(destinationContext.candidates)
     const flightRequest: FlightSearchRequest = {
-      originAirportCode: options.input.originAirportCode,
+      originAirportCode,
       destinationAirportCode,
-      departureDate: options.input.departureDate,
+      departureDate,
       returnDate,
-      adults: options.input.adults ?? preferences.groupSize,
-      children: options.input.children ?? 0,
-      infants: options.input.infants ?? 0,
-      cabinClass: options.input.cabinClass,
+      adults,
+      children,
+      infants,
+      cabinClass,
       currency,
-      nonStopOnly: options.input.nonStopOnly,
+      nonStopOnly,
       simulationMode: options.input.simulationMode,
     }
     const hotelRequest: HotelSearchRequest = {
       cityId: destinationCity.id,
       checkInDate,
       checkOutDate,
-      adults: options.input.adults ?? preferences.groupSize,
-      children: options.input.children ?? 0,
+      adults,
+      children,
       rooms,
       currency,
       itineraryCenter,
@@ -767,9 +907,21 @@ export class TripTravelPlanningService {
     this.assertOfferSearchSucceeded('flight', flightSearch, trip)
     this.assertOfferSearchSucceeded('hotel', hotelSearch, trip)
 
-    const rankedFlightOffers = rankFlightOffers(flightSearch.offers)
-    const rankedHotelOffers = rankHotelOffers(hotelSearch.offers, 'BEST_VALUE', itineraryCenter)
-    const selectedFlightOffer = selectFlightOffer(rankedFlightOffers, 'BEST_VALUE', options.input.selectedFlightOfferId)
+    const rankedFlightOffers = rankFlightOffers(flightSearch.offers, flightSelectionStrategy)
+    const rankedHotelOffers = rankHotelOffers(hotelSearch.offers, hotelSelectionStrategy, itineraryCenter)
+    const [currentFlightSelection, currentHotelSelection] = await Promise.all([
+      this.dependencies.getCurrentFlightSelection(options.tripId),
+      this.dependencies.getCurrentHotelSelection(options.tripId),
+    ])
+    const selectedPersistedFlightOffer = usableFlightSelection(
+      currentFlightSelection,
+      flightSearch,
+      rankedFlightOffers,
+      new Date()
+    )
+    const requestedFlightOfferId = options.input.selectedFlightOfferId ?? selectedPersistedFlightOffer?.id
+    const selectedFlightOffer = selectFlightOffer(rankedFlightOffers, flightSelectionStrategy, requestedFlightOfferId)
+    const flightSelectionSource = selectedPersistedFlightOffer?.id === selectedFlightOffer?.id ? 'USER_SELECTED' : 'SYSTEM_RECOMMENDED'
     if (!selectedFlightOffer) {
       throw new TravelPlanningError(
         'UNKNOWN_FLIGHT_OFFER_ID',
@@ -783,12 +935,20 @@ export class TripTravelPlanningService {
         })
       )
     }
+    const selectedPersistedHotelOffer = usableHotelSelection(
+      currentHotelSelection,
+      hotelSearch,
+      rankedHotelOffers,
+      new Date()
+    )
+    const requestedHotelOfferId = options.input.selectedHotelOfferId ?? selectedPersistedHotelOffer?.id
     const selectedHotelOffer = selectHotelOffer(
       rankedHotelOffers,
-      'BEST_VALUE',
-      options.input.selectedHotelOfferId,
+      hotelSelectionStrategy,
+      requestedHotelOfferId,
       itineraryCenter
     )
+    const hotelSelectionSource = selectedPersistedHotelOffer?.id === selectedHotelOffer?.id ? 'USER_SELECTED' : 'SYSTEM_RECOMMENDED'
     if (!selectedHotelOffer) {
       throw new TravelPlanningError(
         'UNKNOWN_HOTEL_OFFER_ID',
@@ -813,6 +973,12 @@ export class TripTravelPlanningService {
       selectedHotelOffer,
       destinationCandidates: selectedDestinationCandidates(destinationRetrieval, destinationContext),
     })
+    const budgetSnapshot = await this.dependencies.persistBudgetSnapshot({
+      tripId: trip.id,
+      budgetSummary,
+      selectedFlightSnapshotId: flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : null,
+      selectedHotelSnapshotId: hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : null,
+    })
     const travelOffersContext = buildTravelOffersContext(
       selectedFlightOffer,
       selectedHotelOffer,
@@ -833,6 +999,10 @@ export class TripTravelPlanningService {
       destinationRetrieval,
       destinationContext,
       budgetSummary,
+      flightSelectionSource,
+      hotelSelectionSource,
+      selectedFlightSnapshotId: flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : undefined,
+      selectedHotelSnapshotId: hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : undefined,
     })
 
     return {
@@ -844,6 +1014,10 @@ export class TripTravelPlanningService {
       exchangeRate,
       flightRequest,
       hotelRequest,
+      selectedFlightSnapshotId: flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : undefined,
+      selectedHotelSnapshotId: hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : undefined,
+      flightSelectionSource,
+      hotelSelectionSource,
       flightSearch,
       hotelSearch,
       rankedFlightOffers,
@@ -851,6 +1025,7 @@ export class TripTravelPlanningService {
       selectedFlightOffer,
       selectedHotelOffer,
       budgetSummary,
+      budgetSnapshot,
       destinationCity,
       destinationRetrieval,
       destinationContext,
@@ -899,6 +1074,10 @@ export class TripTravelPlanningService {
     destinationRetrieval: DestinationRetrievalResult
     destinationContext: GeminiDestinationContext
     budgetSummary: TripBudgetSummary
+    flightSelectionSource: 'USER_SELECTED' | 'SYSTEM_RECOMMENDED'
+    hotelSelectionSource: 'USER_SELECTED' | 'SYSTEM_RECOMMENDED'
+    selectedFlightSnapshotId?: string
+    selectedHotelSnapshotId?: string
   }): TripTravelPlanningSummary {
     return {
       tripId: input.trip.id,
@@ -922,6 +1101,10 @@ export class TripTravelPlanningService {
       hotelCacheStatus: input.hotelSearch.cacheStatus,
       selectedFlightOfferId: input.selectedFlightOffer.id,
       selectedHotelOfferId: input.selectedHotelOffer.id,
+      selectedFlightSnapshotId: input.selectedFlightSnapshotId,
+      selectedHotelSnapshotId: input.selectedHotelSnapshotId,
+      flightSelectionSource: input.flightSelectionSource,
+      hotelSelectionSource: input.hotelSelectionSource,
       flightTotal: input.selectedFlightOffer.totalPrice,
       hotelTotal: input.selectedHotelOffer.totalPrice,
       eligibleCandidates: input.destinationRetrieval.candidates.length,

@@ -13,6 +13,46 @@ enum TripStatus {
   COMPLETE
 }
 
+enum TravelCabinClass {
+  ECONOMY
+  PREMIUM_ECONOMY
+  BUSINESS
+  FIRST
+}
+
+enum FlightSelectionStrategy {
+  CHEAPEST
+  SHORTEST
+  FEWEST_STOPS
+  BEST_VALUE
+}
+
+enum HotelSelectionStrategy {
+  CHEAPEST
+  REFUNDABLE
+  NEAREST_TO_ITINERARY
+  BEST_VALUE
+}
+
+enum TripOfferSelectionStatus {
+  SELECTED
+  EXPIRED
+  REPLACED
+  INVALIDATED
+}
+
+enum TripOfferSelectionSource {
+  USER_SELECTED
+  SYSTEM_RECOMMENDED
+}
+
+enum TripBudgetSnapshotStatus {
+  CURRENT
+  SUPERSEDED
+  STALE
+  INCOMPLETE
+}
+
 enum DestinationImportSource {
   OPENSTREETMAP
   WIKIVOYAGE
@@ -125,6 +165,10 @@ model Trip {
 
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   preferenceSet PreferenceSet?
+  travelProfile TripTravelProfile?
+  flightSelections TripFlightSelection[]
+  hotelSelections TripHotelSelection[]
+  budgetSnapshots TripBudgetSnapshot[]
 
   @@map("trips")
 }
@@ -148,6 +192,144 @@ model PreferenceSet {
   trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
   @@map("preference_sets")
+}
+
+model TripTravelProfile {
+  id                       String                  @id @default(uuid())
+  tripId                   String                  @unique
+  originCity               String?                 @db.VarChar(160)
+  originCountry            String?                 @db.VarChar(120)
+  originAirportCode        String?                 @db.VarChar(3)
+  destinationAirportCode   String?                 @db.VarChar(3)
+  departureDate            DateTime?               @db.Date
+  returnDate               DateTime?               @db.Date
+  adults                   Int                     @default(1)
+  children                 Int                     @default(0)
+  infants                  Int                     @default(0)
+  rooms                    Int                     @default(1)
+  cabinClass               TravelCabinClass        @default(ECONOMY)
+  nonStopOnly              Boolean                 @default(false)
+  currency                 String?                 @db.VarChar(3)
+  flightSelectionStrategy  FlightSelectionStrategy @default(BEST_VALUE)
+  hotelSelectionStrategy   HotelSelectionStrategy  @default(BEST_VALUE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([originAirportCode, destinationAirportCode])
+  @@index([departureDate, returnDate])
+  @@map("trip_travel_profiles")
+}
+
+model TripFlightSelection {
+  id                     String                    @id @default(uuid())
+  tripId                 String
+  offerId                String                    @db.VarChar(220)
+  providerKey            String                    @db.VarChar(80)
+  providerOfferId        String                    @db.VarChar(220)
+  searchFingerprint      String                    @db.VarChar(64)
+  originAirportCode      String                    @db.VarChar(3)
+  destinationAirportCode String                    @db.VarChar(3)
+  departureDate          DateTime                  @db.Date
+  returnDate             DateTime?                 @db.Date
+  itinerarySummary       Json
+  originalAmount         Decimal                   @db.Decimal(18, 2)
+  originalCurrency       String                    @db.VarChar(3)
+  convertedAmount        Decimal?                  @db.Decimal(18, 2)
+  convertedCurrency      String?                   @db.VarChar(3)
+  conversionRate         Decimal?                  @db.Decimal(18, 8)
+  conversionTimestamp    DateTime?
+  baggageSummary         Json?
+  refundable             Boolean?
+  fetchedAt              DateTime
+  providerExpiresAt      DateTime?
+  selectedAt             DateTime                  @default(now())
+  status                 TripOfferSelectionStatus  @default(SELECTED)
+  selectionSource        TripOfferSelectionSource  @default(USER_SELECTED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip            Trip                 @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  budgetSnapshots TripBudgetSnapshot[] @relation("FlightSelectionBudgetSnapshots")
+
+  @@index([tripId, status])
+  @@index([searchFingerprint])
+  @@index([providerKey, providerOfferId])
+  @@map("trip_flight_selections")
+}
+
+model TripHotelSelection {
+  id                    String                    @id @default(uuid())
+  tripId                String
+  offerId               String                    @db.VarChar(220)
+  providerKey           String                    @db.VarChar(80)
+  providerOfferId       String                    @db.VarChar(220)
+  searchFingerprint     String                    @db.VarChar(64)
+  propertyId            String                    @db.VarChar(220)
+  propertyName          String                    @db.VarChar(240)
+  coordinates           Json?
+  checkInDate           DateTime                  @db.Date
+  checkOutDate          DateTime                  @db.Date
+  roomSummary           Json?
+  boardType             String?                   @db.VarChar(80)
+  originalAmount        Decimal                   @db.Decimal(18, 2)
+  originalCurrency      String                    @db.VarChar(3)
+  convertedAmount       Decimal?                  @db.Decimal(18, 2)
+  convertedCurrency     String?                   @db.VarChar(3)
+  conversionRate        Decimal?                  @db.Decimal(18, 8)
+  conversionTimestamp   DateTime?
+  refundable            Boolean?
+  fetchedAt             DateTime
+  providerExpiresAt     DateTime?
+  selectedAt            DateTime                  @default(now())
+  status                TripOfferSelectionStatus  @default(SELECTED)
+  selectionSource       TripOfferSelectionSource  @default(USER_SELECTED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip            Trip                 @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  budgetSnapshots TripBudgetSnapshot[] @relation("HotelSelectionBudgetSnapshots")
+
+  @@index([tripId, status])
+  @@index([searchFingerprint])
+  @@index([providerKey, providerOfferId])
+  @@map("trip_hotel_selections")
+}
+
+model TripBudgetSnapshot {
+  id                       String                   @id @default(uuid())
+  tripId                   String
+  currency                 String                   @db.VarChar(3)
+  flight                   Json
+  accommodation            Json
+  attractions              Json
+  food                     Json
+  localTransport           Json
+  contingency              Json
+  totalAmount              Decimal?                 @db.Decimal(18, 2)
+  perPersonAmount          Decimal?                 @db.Decimal(18, 2)
+  assumptions              Json
+  missingData              Json
+  selectedFlightSnapshotId String?
+  selectedHotelSnapshotId  String?
+  calculatedAt             DateTime
+  status                   TripBudgetSnapshotStatus @default(CURRENT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  trip                    Trip                 @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  selectedFlightSnapshot  TripFlightSelection? @relation("FlightSelectionBudgetSnapshots", fields: [selectedFlightSnapshotId], references: [id], onDelete: SetNull)
+  selectedHotelSnapshot   TripHotelSelection?  @relation("HotelSelectionBudgetSnapshots", fields: [selectedHotelSnapshotId], references: [id], onDelete: SetNull)
+
+  @@index([tripId, status])
+  @@index([selectedFlightSnapshotId])
+  @@index([selectedHotelSnapshotId])
+  @@map("trip_budget_snapshots")
 }
 
 model ExchangeRate {

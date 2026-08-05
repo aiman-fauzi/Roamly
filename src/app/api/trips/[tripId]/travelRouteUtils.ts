@@ -3,7 +3,10 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { ExchangeRateError } from '@/services/exchangeRateService'
 import type { TravelOfferResultStatus } from '@/services/travel/offers/types'
+import { TripOfferSelectionError } from '@/services/travel/persistence/tripOfferSelectionService'
 import { TravelPlanningError } from '@/services/travel/planning/tripTravelPlanningService'
+import { TripTravelProfileError } from '@/services/travel/profile/tripTravelProfileService'
+import { TripTravelSearchRequestError } from '@/services/travel/profile/tripTravelSearchRequestService'
 import { getTripById } from '@/services/tripService'
 import { ensureUser } from '@/services/userService'
 import type { ApiErrorResponse } from '@/types/api'
@@ -60,6 +63,15 @@ export function routeErrorResponse(error: unknown) {
     return err(error.message, 'EXCHANGE_RATE_UNAVAILABLE', 400)
   }
   if (error instanceof TravelPlanningError) {
+    return err(error.message, error.code, error.status, error.details)
+  }
+  if (error instanceof TripTravelProfileError) {
+    return err(error.message, error.code, error.status, error.details)
+  }
+  if (error instanceof TripOfferSelectionError) {
+    return err(error.message, error.code, error.status, error.details)
+  }
+  if (error instanceof TripTravelSearchRequestError) {
     return err(error.message, error.code, error.status, error.details)
   }
 

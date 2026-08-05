@@ -4,11 +4,15 @@ import { POST } from './route'
 
 import { createClient } from '@/lib/supabase/server'
 import { createDefaultTravelOfferService } from '@/services/travel/offers/travelOfferService'
+import { TripTravelProfileService } from '@/services/travel/profile/tripTravelProfileService'
+import { TripTravelSearchRequestService } from '@/services/travel/profile/tripTravelSearchRequestService'
 import { getTripById } from '@/services/tripService'
 import { ensureUser } from '@/services/userService'
 
 const routeMocks = vi.hoisted(() => ({
   searchFlights: vi.fn(),
+  buildSearchRequests: vi.fn(),
+  upsertTravelProfile: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -21,6 +25,14 @@ vi.mock('@/services/tripService', () => ({
 
 vi.mock('@/services/travel/offers/travelOfferService', () => ({
   createDefaultTravelOfferService: vi.fn(() => ({ searchFlights: routeMocks.searchFlights })),
+}))
+
+vi.mock('@/services/travel/profile/tripTravelSearchRequestService', () => ({
+  TripTravelSearchRequestService: vi.fn(() => ({ build: routeMocks.buildSearchRequests })),
+}))
+
+vi.mock('@/services/travel/profile/tripTravelProfileService', () => ({
+  TripTravelProfileService: vi.fn(() => ({ upsert: routeMocks.upsertTravelProfile })),
 }))
 
 vi.mock('@/services/userService', () => ({
@@ -46,6 +58,24 @@ describe('flight offer route', () => {
     } as never)
     vi.mocked(ensureUser).mockResolvedValue({ id: 'user-1' } as never)
     vi.mocked(getTripById).mockResolvedValue({ id: 'trip-1', userId: 'user-1' } as never)
+    routeMocks.upsertTravelProfile.mockResolvedValue({
+      travelProfile: { id: 'profile-1' },
+      readiness: { canSearchOffers: true },
+      invalidated: [],
+    })
+    routeMocks.buildSearchRequests.mockResolvedValue({
+      flightRequest: {
+        originAirportCode: 'KUL',
+        destinationAirportCode: 'KIX',
+        departureDate: '2026-09-01',
+        returnDate: '2026-09-05',
+        adults: 2,
+        children: 0,
+        infants: 0,
+        cabinClass: 'ECONOMY',
+        currency: 'MYR',
+      },
+    })
     routeMocks.searchFlights.mockResolvedValue({
       status: 'SUCCESS',
       provider: 'mock',
@@ -100,7 +130,7 @@ describe('flight offer route', () => {
         departureDate: '2026-09-01',
         adults: '2',
         currency: 'myr',
-        refresh: true,
+        refreshOffers: true,
       }),
       { params: Promise.resolve({ tripId: 'trip-1' }) }
     )
@@ -108,6 +138,28 @@ describe('flight offer route', () => {
 
     expect(response.status).toBe(200)
     expect(createDefaultTravelOfferService).toHaveBeenCalledTimes(1)
+    expect(TripTravelProfileService).toHaveBeenCalledTimes(1)
+    expect(routeMocks.upsertTravelProfile).toHaveBeenCalledWith({
+      tripId: 'trip-1',
+      userId: 'user-1',
+      data: expect.objectContaining({
+        originAirportCode: 'KUL',
+        destinationAirportCode: 'KIX',
+        departureDate: '2026-09-01',
+        adults: 2,
+        currency: 'MYR',
+      }),
+      hasCompleteItinerary: false,
+    })
+    expect(TripTravelSearchRequestService).toHaveBeenCalledTimes(1)
+    expect(routeMocks.buildSearchRequests).toHaveBeenCalledWith({
+      tripId: 'trip-1',
+      userId: 'user-1',
+      overrides: expect.objectContaining({
+        originAirportCode: 'KUL',
+        refreshOffers: true,
+      }),
+    })
     expect(routeMocks.searchFlights).toHaveBeenCalledWith(
       expect.objectContaining({
         originAirportCode: 'KUL',

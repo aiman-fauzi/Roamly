@@ -1,12 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   flightSearchRequestSchema,
   hotelSearchRequestSchema,
+  persistedTripTravelPlanningRequestSchema,
+  tripTravelProfileUpdateSchema,
   tripTravelPlanningRequestSchema,
 } from '@/lib/validations/travelOfferValidation'
 
 describe('travel offer validation', () => {
+  afterEach(() => {
+    delete process.env.MAX_TRAVELERS_PER_TRIP
+    delete process.env.ALLOW_ROOMS_GREATER_THAN_TRAVELERS
+  })
+
   it('normalizes flight search airport and currency codes', () => {
     const parsed = flightSearchRequestSchema.parse({
       originAirportCode: ' kul ',
@@ -78,5 +85,50 @@ describe('travel offer validation', () => {
       currency: 'MYR',
       simulationMode: 'NORMAL',
     })
+  })
+
+  it('rejects impossible date-only values without timezone normalization', () => {
+    const parsed = tripTravelProfileUpdateSchema.safeParse({
+      departureDate: '2026-02-31',
+      returnDate: '2026-03-02',
+    })
+
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.flatten().fieldErrors.departureDate).toContain('Use a valid calendar date.')
+    }
+  })
+
+  it('validates traveler, infant, room, and configured total-traveler rules', () => {
+    process.env.MAX_TRAVELERS_PER_TRIP = '3'
+
+    const parsed = tripTravelProfileUpdateSchema.safeParse({
+      adults: 2,
+      children: 1,
+      infants: 1,
+      rooms: 5,
+    })
+
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      const errors = parsed.error.flatten().fieldErrors
+      expect(errors.adults).toContain('Total travelers cannot exceed 3.')
+      expect(errors.rooms).toContain('Room count cannot be greater than total travelers.')
+    }
+  })
+
+  it('allows persisted planning requests to rely on saved profile fields', () => {
+    const parsed = persistedTripTravelPlanningRequestSchema.parse({
+      refreshOffers: true,
+      persist: false,
+      simulationMode: 'NORMAL',
+    })
+
+    expect(parsed).toMatchObject({
+      refreshOffers: true,
+      persist: false,
+      simulationMode: 'NORMAL',
+    })
+    expect(parsed).not.toHaveProperty('cabinClass')
   })
 })

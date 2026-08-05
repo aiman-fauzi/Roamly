@@ -16,6 +16,7 @@ export interface TravelOfferServiceOptions {
   hotelCache?: InMemoryOfferCache<HotelSearchResult>
   flightTtlSeconds?: number
   hotelTtlSeconds?: number
+  maxPayloadBytes?: number
   now?: () => Date
 }
 
@@ -25,6 +26,7 @@ export interface SearchOptions {
 
 const DEFAULT_FLIGHT_TTL_SECONDS = 15 * 60
 const DEFAULT_HOTEL_TTL_SECONDS = 15 * 60
+const DEFAULT_MAX_PAYLOAD_BYTES = 256_000
 let defaultTravelOfferService: TravelOfferService | null = null
 
 function readPositiveInteger(value: string | undefined, fallback: number): number {
@@ -79,6 +81,7 @@ export class TravelOfferService {
   private readonly hotelCache: InMemoryOfferCache<HotelSearchResult>
   private readonly flightTtlSeconds: number
   private readonly hotelTtlSeconds: number
+  private readonly maxPayloadBytes: number
   private readonly now: () => Date
 
   constructor(options: TravelOfferServiceOptions = {}) {
@@ -93,6 +96,9 @@ export class TravelOfferService {
     this.hotelTtlSeconds =
       options.hotelTtlSeconds ??
       readPositiveInteger(process.env.HOTEL_OFFER_CACHE_TTL_SECONDS, DEFAULT_HOTEL_TTL_SECONDS)
+    this.maxPayloadBytes =
+      options.maxPayloadBytes ??
+      readPositiveInteger(process.env.TRAVEL_OFFER_CACHE_MAX_PAYLOAD_BYTES, DEFAULT_MAX_PAYLOAD_BYTES)
   }
 
   async searchFlights(request: FlightSearchRequest, options: SearchOptions = {}): Promise<FlightSearchResult> {
@@ -104,6 +110,7 @@ export class TravelOfferService {
         ttlSeconds: this.flightTtlSeconds,
         now: this.now(),
         refresh: options.refresh,
+        maxPayloadBytes: this.maxPayloadBytes,
       }
     )
 
@@ -124,6 +131,7 @@ export class TravelOfferService {
         ttlSeconds: this.hotelTtlSeconds,
         now: this.now(),
         refresh: options.refresh,
+        maxPayloadBytes: this.maxPayloadBytes,
       }
     )
 

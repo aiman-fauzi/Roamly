@@ -8,8 +8,13 @@ import {
   type RouteContext,
 } from '../travelRouteUtils'
 
-import { hotelSearchRequestSchema } from '@/lib/validations/travelOfferValidation'
+import {
+  persistedTripTravelPlanningRequestSchema,
+  tripTravelProfileUpdateSchema,
+} from '@/lib/validations/travelOfferValidation'
 import { createDefaultTravelOfferService } from '@/services/travel/offers/travelOfferService'
+import { TripTravelProfileService } from '@/services/travel/profile/tripTravelProfileService'
+import { TripTravelSearchRequestService } from '@/services/travel/profile/tripTravelSearchRequestService'
 
 export async function POST(request: Request, { params }: RouteContext) {
   const { tripId } = await params
@@ -19,14 +24,29 @@ export async function POST(request: Request, { params }: RouteContext) {
   const json = await readJsonBody(request)
   if ('response' in json) return json.response
 
-  const parsed = hotelSearchRequestSchema.safeParse(json.body)
+  const parsed = persistedTripTravelPlanningRequestSchema.safeParse(json.body ?? {})
   if (!parsed.success) {
     return err('Hotel search request is invalid.', 'VALIDATION_ERROR', 400, parsed.error.flatten())
   }
 
   try {
-    const { refresh, ...searchRequest } = parsed.data
-    const result = await createDefaultTravelOfferService().searchHotels(searchRequest, { refresh })
+    const profileUpdate = tripTravelProfileUpdateSchema.parse(parsed.data)
+    if (Object.keys(profileUpdate).length > 0) {
+      await new TripTravelProfileService().upsert({
+        tripId,
+        userId: guard.userId,
+        data: profileUpdate,
+        hasCompleteItinerary: Boolean(guard.trip.itineraryJson),
+      })
+    }
+    const { hotelRequest } = await new TripTravelSearchRequestService().build({
+      tripId,
+      userId: guard.userId,
+      overrides: parsed.data,
+    })
+    const result = await createDefaultTravelOfferService().searchHotels(hotelRequest, {
+      refresh: parsed.data.refreshOffers,
+    })
     if (result.status !== 'SUCCESS' && result.status !== 'NO_RESULTS') {
       return err('Hotel offers are unavailable for this search.', `HOTEL_${result.status}`, offerStatusCode(result.status), {
         provider: result.provider,

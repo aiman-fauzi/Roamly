@@ -86,6 +86,28 @@ const retrieval: DestinationRetrievalResult = {
   nearestNeighbors: [],
 }
 
+const travelProfile = {
+  id: 'travel-profile-1',
+  tripId: 'trip-1',
+  originCity: 'Kuala Lumpur',
+  originCountry: 'Malaysia',
+  originAirportCode: 'KUL',
+  destinationAirportCode: 'KIX',
+  departureDate: new Date('2026-09-01T00:00:00.000Z'),
+  returnDate: new Date('2026-09-03T00:00:00.000Z'),
+  adults: 2,
+  children: 0,
+  infants: 0,
+  rooms: 1,
+  cabinClass: 'ECONOMY',
+  nonStopOnly: false,
+  currency: 'MYR',
+  flightSelectionStrategy: 'BEST_VALUE',
+  hotelSelectionStrategy: 'BEST_VALUE',
+  createdAt: new Date('2026-08-05T00:00:00.000Z'),
+  updatedAt: new Date('2026-08-05T00:00:00.000Z'),
+}
+
 function itinerary(request: GenerateItineraryRequest, overrides: Partial<Itinerary> = {}): GenerateItineraryResponse {
   return {
     title: 'Kuala Lumpur with Travel Offers',
@@ -164,6 +186,13 @@ function createService(overrides: Partial<ConstructorParameters<typeof TripTrave
     status: TripStatus.COMPLETE,
     itineraryJson: {},
   })
+  const persistBudgetSnapshot = vi.fn().mockResolvedValue({
+    id: 'budget-snapshot-1',
+    tripId: 'trip-1',
+    status: 'CURRENT',
+    totalAmount: { amount: '2002.00', currency: 'MYR' },
+    perPersonAmount: { amount: '1001.00', currency: 'MYR' },
+  })
 
   return {
     generateItinerary,
@@ -194,6 +223,10 @@ function createService(overrides: Partial<ConstructorParameters<typeof TripTrave
         fetchedAt: now,
         fromCache: false,
       }),
+      getTravelProfile: vi.fn().mockResolvedValue(travelProfile),
+      getCurrentFlightSelection: vi.fn().mockResolvedValue(null),
+      getCurrentHotelSelection: vi.fn().mockResolvedValue(null),
+      persistBudgetSnapshot,
       travelOfferService: new TravelOfferService({
         flightProvider: new MockFlightOfferProvider(() => now),
         hotelProvider: new MockHotelOfferProvider(() => now),
@@ -214,13 +247,6 @@ describe('TripTravelPlanningService', () => {
       tripId: 'trip-1',
       userId: 'user-1',
       input: {
-        originAirportCode: 'KUL',
-        departureDate: '2026-09-01',
-        returnDate: '2026-09-03',
-        adults: 2,
-        rooms: 1,
-        currency: 'MYR',
-        cabinClass: 'ECONOMY',
         persist: true,
         simulationMode: 'NORMAL',
         maxCandidates: 1,
@@ -234,6 +260,8 @@ describe('TripTravelPlanningService', () => {
       hotelOffersReturned: 2,
       selectedFlightOfferId: result.selectedFlightOffer.id,
       selectedHotelOfferId: result.selectedHotelOffer.id,
+      flightSelectionSource: 'SYSTEM_RECOMMENDED',
+      hotelSelectionSource: 'SYSTEM_RECOMMENDED',
       knownAttractionCost: { amount: '20.00', currency: 'MYR' },
       wholeTripTotal: { amount: '2002.00', currency: 'MYR' },
       perPersonTotal: { amount: '1001.00', currency: 'MYR' },
@@ -244,6 +272,7 @@ describe('TripTravelPlanningService', () => {
     })
     expect(result.itinerary.selectedFlightOfferId).toBe(result.selectedFlightOffer.id)
     expect(result.itinerary.selectedHotelOfferId).toBe(result.selectedHotelOffer.id)
+    expect(result.budgetSnapshot?.id).toBe('budget-snapshot-1')
     expect(generateItinerary).toHaveBeenCalledWith(
       expect.objectContaining({
         travelOffersContext: expect.objectContaining({

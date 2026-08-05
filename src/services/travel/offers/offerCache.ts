@@ -10,10 +10,17 @@ export interface OfferCacheLookup<T> extends OfferCacheEntry<T> {
   cacheStatus: 'HIT' | 'MISS' | 'REFRESHED'
 }
 
+export interface OfferCacheStore<T> {
+  get(key: string, now?: Date): OfferCacheEntry<T> | null
+  getOrSet(key: string, loader: () => Promise<T>, options: OfferCacheOptions): Promise<OfferCacheLookup<T>>
+  clear(): void
+}
+
 export interface OfferCacheOptions {
   ttlSeconds: number
   now?: Date
   refresh?: boolean
+  maxPayloadBytes?: number
 }
 
 interface PendingEntry<T> {
@@ -35,7 +42,11 @@ export function buildOfferSearchFingerprint(input: unknown): string {
   return createHash('sha256').update(stableJson(input)).digest('hex')
 }
 
-export class InMemoryOfferCache<T> {
+function payloadSizeBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8')
+}
+
+export class InMemoryOfferCache<T> implements OfferCacheStore<T> {
   private readonly entries = new Map<string, OfferCacheEntry<T>>()
   private readonly pending = new Map<string, PendingEntry<T>>()
 
@@ -59,6 +70,9 @@ export class InMemoryOfferCache<T> {
     if (pending && !options.refresh) return pending.promise
 
     const promise = loader().then((value) => {
+      if (options.maxPayloadBytes != null && payloadSizeBytes(value) > options.maxPayloadBytes) {
+        throw new Error(`Offer cache payload exceeded ${options.maxPayloadBytes} bytes.`)
+      }
       const fetchedAt = options.now ?? new Date()
       const expiresAt = new Date(fetchedAt.getTime() + options.ttlSeconds * 1000)
       const entry = { value, fetchedAt, expiresAt }
