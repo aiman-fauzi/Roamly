@@ -13,6 +13,74 @@ enum TripStatus {
   COMPLETE
 }
 
+enum DestinationImportSource {
+  OPENSTREETMAP
+  WIKIVOYAGE
+  WIKIPEDIA
+  GOVERNMENT_TOURISM
+}
+
+enum DestinationImportStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum DestinationEnrichmentStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum DestinationBudgetLevel {
+  FREE
+  BUDGET
+  MODERATE
+  PREMIUM
+  LUXURY
+}
+
+enum DestinationSetting {
+  INDOOR
+  OUTDOOR
+  MIXED
+}
+
+enum DestinationFactEntityType {
+  ATTRACTION
+  RESTAURANT
+  HOTEL
+  ACTIVITY
+}
+
+enum DestinationFactType {
+  OPENING_HOURS
+  TICKET_PRICE
+  ADDRESS
+  COORDINATES
+  OFFICIAL_URL
+  OPERATIONAL_STATUS
+  VISIT_DURATION
+  DESCRIPTION_TAGS
+}
+
+enum DestinationFactSourceTier {
+  OFFICIAL_SOURCE
+  GOVERNMENT_OPEN_DATA
+  OPENSTREETMAP_STRUCTURED
+  TRUSTED_TRAVEL_LISTING
+  GEMINI_DERIVED
+}
+
+enum DestinationFactStatus {
+  ACTIVE
+  STALE
+  INVALID
+  REJECTED
+}
+
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
@@ -96,4 +164,390 @@ model ExchangeRate {
   @@unique([baseCurrency, quoteCurrency])
   @@index([baseCurrency, quoteCurrency, fetchedAt])
   @@map("exchange_rates")
+}
+
+model Country {
+  id           String    @id @default(uuid())
+  name         String    @db.VarChar(120)
+  slug         String    @unique @db.VarChar(140)
+  iso2         String    @unique @db.VarChar(2)
+  iso3         String?   @unique @db.VarChar(3)
+  currencyCode String?   @db.VarChar(3)
+  phoneCode    String?   @db.VarChar(20)
+  description  String?
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  cities City[]
+  images DestinationImage[]
+  tags   DestinationTag[]   @relation("CountryDestinationTags")
+
+  @@index([name])
+  @@index([deletedAt])
+  @@map("countries")
+}
+
+model City {
+  id          String    @id @default(uuid())
+  countryId   String
+  name        String    @db.VarChar(160)
+  slug        String    @db.VarChar(180)
+  region      String?   @db.VarChar(160)
+  latitude    Decimal?  @db.Decimal(10, 7)
+  longitude   Decimal?  @db.Decimal(10, 7)
+  timezone    String?   @db.VarChar(80)
+  description String?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  country     Country            @relation(fields: [countryId], references: [id], onDelete: Restrict)
+  attractions Attraction[]
+  restaurants Restaurant[]
+  hotels      Hotel[]
+  activities  Activity[]
+  images      DestinationImage[]
+  tags        DestinationTag[]   @relation("CityDestinationTags")
+
+  @@unique([countryId, slug])
+  @@index([countryId])
+  @@index([name])
+  @@index([slug])
+  @@index([deletedAt])
+  @@map("cities")
+}
+
+model Attraction {
+  id              String    @id @default(uuid())
+  cityId          String
+  name            String    @db.VarChar(200)
+  slug            String    @db.VarChar(220)
+  description     String?
+  address         String?
+  latitude        Decimal?  @db.Decimal(10, 7)
+  longitude       Decimal?  @db.Decimal(10, 7)
+  websiteUrl      String?
+  phone           String?   @db.VarChar(50)
+  priceLevel      Int?
+  durationMinutes Int?
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  city         City                   @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  images       DestinationImage[]
+  openingHours OpeningHour[]
+  tags         DestinationTag[]       @relation("AttractionDestinationTags")
+  enrichment   DestinationEnrichment?
+
+  @@unique([cityId, slug])
+  @@index([cityId])
+  @@index([name])
+  @@index([slug])
+  @@index([deletedAt])
+  @@map("attractions")
+}
+
+model Restaurant {
+  id             String    @id @default(uuid())
+  cityId         String
+  name           String    @db.VarChar(200)
+  slug           String    @db.VarChar(220)
+  description    String?
+  address        String?
+  latitude       Decimal?  @db.Decimal(10, 7)
+  longitude      Decimal?  @db.Decimal(10, 7)
+  websiteUrl     String?
+  phone          String?   @db.VarChar(50)
+  cuisines       String[]  @default([])
+  priceLevel     Int?
+  reservationUrl String?
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  city         City                   @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  images       DestinationImage[]
+  openingHours OpeningHour[]
+  tags         DestinationTag[]       @relation("RestaurantDestinationTags")
+  enrichment   DestinationEnrichment?
+
+  @@unique([cityId, slug])
+  @@index([cityId])
+  @@index([name])
+  @@index([slug])
+  @@index([deletedAt])
+  @@map("restaurants")
+}
+
+model Hotel {
+  id           String    @id @default(uuid())
+  cityId       String
+  name         String    @db.VarChar(200)
+  slug         String    @db.VarChar(220)
+  description  String?
+  address      String?
+  latitude     Decimal?  @db.Decimal(10, 7)
+  longitude    Decimal?  @db.Decimal(10, 7)
+  websiteUrl   String?
+  phone        String?   @db.VarChar(50)
+  starRating   Decimal?  @db.Decimal(2, 1)
+  amenities    String[]  @default([])
+  checkInTime  String?   @db.VarChar(5)
+  checkOutTime String?   @db.VarChar(5)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  city         City                   @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  images       DestinationImage[]
+  openingHours OpeningHour[]
+  tags         DestinationTag[]       @relation("HotelDestinationTags")
+  enrichment   DestinationEnrichment?
+
+  @@unique([cityId, slug])
+  @@index([cityId])
+  @@index([name])
+  @@index([slug])
+  @@index([deletedAt])
+  @@map("hotels")
+}
+
+model Activity {
+  id              String    @id @default(uuid())
+  cityId          String
+  name            String    @db.VarChar(200)
+  slug            String    @db.VarChar(220)
+  description     String?
+  category        String?   @db.VarChar(100)
+  address         String?
+  latitude        Decimal?  @db.Decimal(10, 7)
+  longitude       Decimal?  @db.Decimal(10, 7)
+  websiteUrl      String?
+  phone           String?   @db.VarChar(50)
+  priceLevel      Int?
+  durationMinutes Int?
+  minAge          Int?
+  difficulty      String?   @db.VarChar(50)
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  city         City                   @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  images       DestinationImage[]
+  openingHours OpeningHour[]
+  tags         DestinationTag[]       @relation("ActivityDestinationTags")
+  enrichment   DestinationEnrichment?
+
+  @@unique([cityId, slug])
+  @@index([cityId])
+  @@index([name])
+  @@index([slug])
+  @@index([category])
+  @@index([deletedAt])
+  @@map("activities")
+}
+
+model DestinationTag {
+  id          String    @id @default(uuid())
+  name        String    @db.VarChar(100)
+  slug        String    @unique @db.VarChar(120)
+  description String?
+  color       String?   @db.VarChar(20)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  countries   Country[]    @relation("CountryDestinationTags")
+  cities      City[]       @relation("CityDestinationTags")
+  attractions Attraction[] @relation("AttractionDestinationTags")
+  restaurants Restaurant[] @relation("RestaurantDestinationTags")
+  hotels      Hotel[]      @relation("HotelDestinationTags")
+  activities  Activity[]   @relation("ActivityDestinationTags")
+
+  @@index([name])
+  @@index([deletedAt])
+  @@map("destination_tags")
+}
+
+model DestinationImage {
+  id           String    @id @default(uuid())
+  countryId    String?
+  cityId       String?
+  attractionId String?
+  restaurantId String?
+  hotelId      String?
+  activityId   String?
+  url          String
+  altText      String?   @db.VarChar(255)
+  caption      String?   @db.VarChar(255)
+  attribution  String?   @db.VarChar(255)
+  sortOrder    Int       @default(0)
+  isPrimary    Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  country    Country?    @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  city       City?       @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  attraction Attraction? @relation(fields: [attractionId], references: [id], onDelete: Cascade)
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  hotel      Hotel?      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  activity   Activity?   @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([countryId])
+  @@index([cityId])
+  @@index([attractionId])
+  @@index([restaurantId])
+  @@index([hotelId])
+  @@index([activityId])
+  @@index([isPrimary])
+  @@index([deletedAt])
+  @@map("destination_images")
+}
+
+model DestinationFact {
+  id              String                    @id @default(uuid())
+  entityType      DestinationFactEntityType
+  entityId        String
+  factType        DestinationFactType
+  normalizedValue Json
+  rawValue        Json?
+  currency        String?                   @db.VarChar(3)
+  sourceKey       String                    @db.VarChar(100)
+  sourceUrl       String?
+  sourceRecordId  String?                   @db.VarChar(255)
+  sourceTier      DestinationFactSourceTier
+  confidence      Int                       @default(100)
+  retrievedAt     DateTime
+  verifiedAt      DateTime?
+  expiresAt       DateTime?
+  parserVersion   String?                   @db.VarChar(100)
+  status          DestinationFactStatus     @default(ACTIVE)
+  fingerprint     String                    @unique @db.VarChar(80)
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([entityType, entityId, factType, status])
+  @@index([factType, status])
+  @@index([sourceKey, sourceRecordId])
+  @@index([sourceTier, verifiedAt])
+  @@index([expiresAt])
+  @@map("destination_facts")
+}
+
+model OpeningHour {
+  id           String    @id @default(uuid())
+  attractionId String?
+  restaurantId String?
+  hotelId      String?
+  activityId   String?
+  dayOfWeek    Int
+  opensAt      String?   @db.VarChar(5)
+  closesAt     String?   @db.VarChar(5)
+  isClosed     Boolean   @default(false)
+  note         String?   @db.VarChar(255)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  attraction Attraction? @relation(fields: [attractionId], references: [id], onDelete: Cascade)
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  hotel      Hotel?      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  activity   Activity?   @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([attractionId])
+  @@index([restaurantId])
+  @@index([hotelId])
+  @@index([activityId])
+  @@index([dayOfWeek])
+  @@index([deletedAt])
+  @@map("opening_hours")
+}
+
+model DestinationImportJob {
+  id               String                  @id @default(uuid())
+  source           DestinationImportSource
+  sourceKey        String                  @db.VarChar(255)
+  status           DestinationImportStatus @default(PENDING)
+  cursor           Int                     @default(0)
+  totalRecords     Int                     @default(0)
+  processedRecords Int                     @default(0)
+  skippedRecords   Int                     @default(0)
+  failedRecords    Int                     @default(0)
+  config           Json?
+  errorMessage     String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  @@unique([source, sourceKey])
+  @@index([source])
+  @@index([status])
+  @@index([updatedAt])
+  @@map("destination_import_jobs")
+}
+
+model DestinationEnrichment {
+  id                            String                 @id @default(uuid())
+  attractionId                  String?                @unique
+  restaurantId                  String?                @unique
+  hotelId                       String?                @unique
+  activityId                    String?                @unique
+  shortSummary                  String                 @db.VarChar(600)
+  bestFor                       String[]               @default([])
+  hiddenGemScore                Int
+  photographyScore              Int
+  familyFriendly                Boolean
+  coupleFriendly                Boolean
+  kidsFriendly                  Boolean
+  budgetLevel                   DestinationBudgetLevel
+  estimatedVisitDurationMinutes Int
+  bestVisitingHours             String[]               @default([])
+  indoorOutdoor                 DestinationSetting
+  rainFriendly                  Boolean
+  searchTags                    String[]               @default([])
+  provider                      String                 @db.VarChar(50)
+  model                         String                 @db.VarChar(100)
+  generatedAt                   DateTime               @default(now())
+  createdAt                     DateTime               @default(now())
+  updatedAt                     DateTime               @updatedAt
+
+  attraction Attraction? @relation(fields: [attractionId], references: [id], onDelete: Cascade)
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  hotel      Hotel?      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  activity   Activity?   @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([hiddenGemScore])
+  @@index([photographyScore])
+  @@index([familyFriendly])
+  @@index([coupleFriendly])
+  @@index([kidsFriendly])
+  @@index([budgetLevel])
+  @@index([indoorOutdoor])
+  @@index([rainFriendly])
+  @@index([generatedAt])
+  @@map("destination_enrichments")
+}
+
+model DestinationEnrichmentJob {
+  id               String                      @id @default(uuid())
+  sourceKey        String                      @unique @db.VarChar(255)
+  status           DestinationEnrichmentStatus @default(PENDING)
+  batchSize        Int                         @default(25)
+  processedRecords Int                         @default(0)
+  skippedRecords   Int                         @default(0)
+  failedRecords    Int                         @default(0)
+  errorMessage     String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime                    @default(now())
+  updatedAt        DateTime                    @updatedAt
+
+  @@index([status])
+  @@index([updatedAt])
+  @@map("destination_enrichment_jobs")
 }

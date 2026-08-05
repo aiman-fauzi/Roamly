@@ -1,5 +1,5 @@
 /**
- * Database seed script — development convenience only.
+ * Database seed script - development convenience only.
  * Run with: npm run db:seed
  *
  * Creates a single test user with a profile and one draft trip.
@@ -10,8 +10,20 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
+const destinationSeedPlaceholders = {
+  countries: [],
+  cities: [],
+  attractions: [],
+  restaurants: [],
+  hotels: [],
+  activities: [],
+  destinationTags: [],
+  destinationImages: [],
+  openingHours: [],
+} as const
+
 async function main() {
-  console.warn('🌱 Seeding database...')
+  console.warn('Seeding database...')
 
   const user = await prisma.user.upsert({
     where: { email: 'dev@roamly.app' },
@@ -27,7 +39,8 @@ async function main() {
     },
   })
 
-  console.warn(`✅ Seed user created: ${user.email} (id: ${user.id})`)
+  console.warn(`Seed user created: ${user.email} (id: ${user.id})`)
+  console.warn('Destination seed placeholders ready:', destinationSeedPlaceholders)
 }
 
 main()
@@ -38,4 +51,3 @@ main()
   .finally(() => {
     void prisma.$disconnect()
   })
-

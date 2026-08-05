@@ -1,9 +1,13 @@
 export type RoadmapItemKind =
+  | 'attraction'
+  | 'end'
   | 'hotel'
   | 'food'
   | 'transport'
   | 'activity'
+  | 'restaurant'
   | 'shopping'
+  | 'start'
   | 'nightlife'
   | 'other'
 
@@ -25,6 +29,7 @@ export interface BudgetSummary {
 }
 
 export interface ItineraryItem {
+  candidateId: string
   time: string
   title: string
   description: string
@@ -33,10 +38,15 @@ export interface ItineraryItem {
   longitude?: number
   transport: string
   estimatedDuration: string
+  durationMinutes: number
+  reason: string
   estimatedCostLocal: number
   estimatedCostUserCurrency: number
   currencyLocal: string
   currencyUser: string
+  priceConfidence: 'KNOWN_PRICE' | 'ESTIMATED_PRICE' | 'PRICE_UNKNOWN'
+  sourceEntityType?: string
+  sourceEntityId?: string
   tips: string[]
 }
 
@@ -63,6 +73,8 @@ export interface RoadmapDay {
 export interface Itinerary {
   title: string
   summary: string
+  selectedFlightOfferId?: string
+  selectedHotelOfferId?: string
   currencyLocal: string
   currencyUser: string
   exchangeRate: ExchangeRateSnapshot

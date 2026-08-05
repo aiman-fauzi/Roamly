@@ -5,11 +5,15 @@ interface ItineraryTimelineProps {
 }
 
 const KIND_SYMBOLS: Record<RoadmapItemKind, string> = {
+  attraction: 'A',
+  end: 'E',
   hotel: 'H',
   food: 'F',
   transport: 'T',
   activity: 'A',
+  restaurant: 'R',
   shopping: 'S',
+  start: 'S',
   nightlife: 'N',
   other: 'O',
 }

@@ -1,0 +1,187 @@
+{
+  "facts": [
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "89108b6a-c1d8-45d9-b0e2-47103dccb6d5",
+      "factType": "OPENING_HOURS",
+      "rawValue": "Open daily, 9.00 a.m. - 5.00 p.m. The cutoff time for ticket purchase and admission is 4.30 p.m. Closed on the first and second day of Eid al-Fitr and first day of Eid al-Adha.",
+      "normalizedValue": {
+        "timezone": "Asia/Kuala_Lumpur",
+        "weekly": [
+          { "day": "MONDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] },
+          { "day": "TUESDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] },
+          { "day": "WEDNESDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] },
+          { "day": "THURSDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] },
+          { "day": "FRIDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] },
+          { "day": "SATURDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] },
+          { "day": "SUNDAY", "intervals": [{ "opens": "09:00", "closes": "17:00" }] }
+        ],
+        "notes": "Last ticket purchase/admission 16:30. Closed first two days of Eid al-Fitr and first day of Eid al-Adha."
+      },
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://www.muziumnegara.gov.my/en/visiting-info",
+      "sourceRecordId": "muzium-negara:visiting-info:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 95,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "89108b6a-c1d8-45d9-b0e2-47103dccb6d5",
+      "factType": "TICKET_PRICE",
+      "rawValue": "Malaysian citizen: Adult RM2; Elderly/Disabled RM1; Children under 12 free; Secondary school student wearing uniform free; Secondary school student not wearing uniform RM2. Foreigner: Adult RM5; Children aged 6-12 RM2; Children below 5 free; ICOM members free.",
+      "normalizedValue": [
+        { "amount": 2, "currency": "MYR", "priceType": "FIXED", "audience": "ADULT", "notes": "Malaysian citizen adult." },
+        { "amount": 1, "currency": "MYR", "priceType": "FIXED", "audience": "SENIOR", "notes": "Malaysian citizen elderly or disabled visitor." },
+        { "amount": 0, "currency": "MYR", "priceType": "FREE", "audience": "CHILD", "notes": "Malaysian citizen children under 12." },
+        { "amount": 0, "currency": "MYR", "priceType": "FREE", "audience": "STUDENT", "notes": "Malaysian citizen secondary school student wearing uniform." },
+        { "amount": 2, "currency": "MYR", "priceType": "FIXED", "audience": "STUDENT", "notes": "Malaysian citizen secondary school student not wearing uniform." },
+        { "amount": 5, "currency": "MYR", "priceType": "FIXED", "audience": "ADULT", "notes": "Foreigner adult." },
+        { "amount": 2, "currency": "MYR", "priceType": "FIXED", "audience": "CHILD", "notes": "Foreigner child aged 6-12." },
+        { "amount": 0, "currency": "MYR", "priceType": "FREE", "audience": "CHILD", "notes": "Foreigner child below 5." },
+        { "amount": 0, "currency": "MYR", "priceType": "FREE", "audience": "GENERAL", "notes": "International Council of Museums members." }
+      ],
+      "currency": "MYR",
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://www.muziumnegara.gov.my/en/ticket",
+      "sourceRecordId": "muzium-negara:ticket:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 95,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "89108b6a-c1d8-45d9-b0e2-47103dccb6d5",
+      "factType": "OPERATIONAL_STATUS",
+      "rawValue": "Open daily except listed Eid closures.",
+      "normalizedValue": "OPEN",
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://www.muziumnegara.gov.my/en/visiting-info",
+      "sourceRecordId": "muzium-negara:status:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 90,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "89108b6a-c1d8-45d9-b0e2-47103dccb6d5",
+      "factType": "OFFICIAL_URL",
+      "rawValue": "https://www.muziumnegara.gov.my/en/visiting-info",
+      "normalizedValue": "https://www.muziumnegara.gov.my/en/visiting-info",
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://www.muziumnegara.gov.my/en/visiting-info",
+      "sourceRecordId": "muzium-negara:url:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 95,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "c646dd7c-1203-42ac-8b01-4da513216ebb",
+      "factType": "OPENING_HOURS",
+      "rawValue": "Operation hours from 10:00am - 8:00pm (last entry 7:00 pm).",
+      "normalizedValue": {
+        "timezone": "Asia/Kuala_Lumpur",
+        "weekly": [
+          { "day": "MONDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] },
+          { "day": "TUESDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] },
+          { "day": "WEDNESDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] },
+          { "day": "THURSDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] },
+          { "day": "FRIDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] },
+          { "day": "SATURDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] },
+          { "day": "SUNDAY", "intervals": [{ "opens": "10:00", "closes": "20:00" }] }
+        ],
+        "notes": "Last entry 19:00."
+      },
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://aquariaklcc.com/",
+      "sourceRecordId": "aquaria-klcc:hours:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 95,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "c646dd7c-1203-42ac-8b01-4da513216ebb",
+      "factType": "OFFICIAL_URL",
+      "rawValue": "https://aquariaklcc.com/",
+      "normalizedValue": "https://aquariaklcc.com/",
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://aquariaklcc.com/",
+      "sourceRecordId": "aquaria-klcc:url:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 95,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "c646dd7c-1203-42ac-8b01-4da513216ebb",
+      "factType": "OPERATIONAL_STATUS",
+      "rawValue": "Public homepage lists current operation hours and ticket purchase links.",
+      "normalizedValue": "OPEN",
+      "sourceKey": "trusted-manual-official-site",
+      "sourceUrl": "https://aquariaklcc.com/",
+      "sourceRecordId": "aquaria-klcc:status:2026-08-04",
+      "sourceTier": "OFFICIAL_SOURCE",
+      "confidence": 85,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "2c49e596-56c6-4baa-b581-0e16e1dd8e37",
+      "factType": "OPENING_HOURS",
+      "rawValue": "Saturday to Thursday: 09:00 to 12:00, 15:00 to 16:00, 17:30 to 18:30. Fridays: 15:00 to 16:00, 17:30 to 18:30.",
+      "normalizedValue": {
+        "timezone": "Asia/Kuala_Lumpur",
+        "weekly": [
+          { "day": "MONDAY", "intervals": [{ "opens": "09:00", "closes": "12:00" }, { "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] },
+          { "day": "TUESDAY", "intervals": [{ "opens": "09:00", "closes": "12:00" }, { "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] },
+          { "day": "WEDNESDAY", "intervals": [{ "opens": "09:00", "closes": "12:00" }, { "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] },
+          { "day": "THURSDAY", "intervals": [{ "opens": "09:00", "closes": "12:00" }, { "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] },
+          { "day": "FRIDAY", "intervals": [{ "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] },
+          { "day": "SATURDAY", "intervals": [{ "opens": "09:00", "closes": "12:00" }, { "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] },
+          { "day": "SUNDAY", "intervals": [{ "opens": "09:00", "closes": "12:00" }, { "opens": "15:00", "closes": "16:00" }, { "opens": "17:30", "closes": "18:30" }] }
+        ],
+        "notes": "Visitor windows for non-Muslim visitors; closed during prayer times."
+      },
+      "sourceKey": "trusted-manual-travel-listing",
+      "sourceUrl": "https://malaysialife.org/national-mosque-in-kuala-lumpur/",
+      "sourceRecordId": "national-mosque:malaysialife:hours:2026-08-04",
+      "sourceTier": "TRUSTED_TRAVEL_LISTING",
+      "confidence": 80,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    },
+    {
+      "entityType": "ATTRACTION",
+      "entityId": "2c49e596-56c6-4baa-b581-0e16e1dd8e37",
+      "factType": "TICKET_PRICE",
+      "rawValue": "Admission Fee: Free.",
+      "normalizedValue": [{ "amount": 0, "currency": "MYR", "priceType": "FREE", "audience": "GENERAL" }],
+      "currency": "MYR",
+      "sourceKey": "trusted-manual-travel-listing",
+      "sourceUrl": "https://malaysialife.org/national-mosque-in-kuala-lumpur/",
+      "sourceRecordId": "national-mosque:malaysialife:price:2026-08-04",
+      "sourceTier": "TRUSTED_TRAVEL_LISTING",
+      "confidence": 80,
+      "retrievedAt": "2026-08-04T16:10:00.000Z",
+      "verifiedAt": "2026-08-04T16:10:00.000Z",
+      "parserVersion": "manual-fact-v1"
+    }
+  ]
+}

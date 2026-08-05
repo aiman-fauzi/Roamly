@@ -2,6 +2,7 @@ import type { GenerateContentParameters, GenerateContentResponse } from '@google
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GeminiProvider } from '@/ai/providers/GeminiProvider'
+import type { GeminiProviderError } from '@/ai/providers/GeminiProvider'
 import type { GenerateItineraryRequest, GenerateItineraryResponse } from '@/ai/types'
 
 type TestGenerateContent = (
@@ -34,16 +35,20 @@ const validItinerary: GenerateItineraryResponse = {
       theme: 'Arrival and temples',
       morning: [
         {
+          candidateId: 'ATTRACTION:kiyomizu-dera',
           time: '09:00',
           title: 'Kiyomizu-dera',
           description: 'Explore the historic temple complex.',
           location: 'Higashiyama',
           transport: 'Train',
           estimatedDuration: '2 hours',
+          durationMinutes: 120,
+          reason: 'Matches the cultural trip style.',
           estimatedCostLocal: 2500,
           estimatedCostUserCurrency: 80,
           currencyLocal: 'JPY',
           currencyUser: 'MYR',
+          priceConfidence: 'ESTIMATED_PRICE',
           tips: ['Arrive early.'],
         },
       ],
@@ -85,7 +90,7 @@ const request: GenerateItineraryRequest = {
   preferredLanguage: 'en',
 }
 
-function createProvider(generateContent: TestGenerateContent) {
+function createProvider(generateContent: TestGenerateContent, overrides: Partial<ConstructorParameters<typeof GeminiProvider>[0]> = {}) {
   return new GeminiProvider({
     apiKey: 'test-key',
     model: 'gemini-test-model',
@@ -99,6 +104,9 @@ function createProvider(generateContent: TestGenerateContent) {
       warn: vi.fn(),
       error: vi.fn(),
     },
+    delay: vi.fn(async () => undefined),
+    random: () => 0,
+    ...overrides,
   })
 }
 
@@ -138,6 +146,26 @@ describe('GeminiProvider', () => {
     expect(generateContent).toHaveBeenCalledTimes(2)
   })
 
+  it('respects Retry-After for rate limit backoff and exposes the category after retries', async () => {
+    const rateLimitError = Object.assign(new Error('rate limited'), {
+      status: 429,
+      headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? '2' : null) },
+    })
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockRejectedValue(rateLimitError)
+    const delay = vi.fn(async () => undefined)
+    const provider = createProvider(generateContent, { maxRetries: 1, delay })
+
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_RATE_LIMITED',
+      retryAfterMs: 2000,
+    } satisfies Partial<GeminiProviderError>)
+
+    expect(generateContent).toHaveBeenCalledTimes(2)
+    expect(delay).toHaveBeenCalledWith(2000)
+  })
+
   it('throws a friendly error when Gemini returns malformed JSON', async () => {
     const generateContent = vi
       .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
@@ -147,6 +175,9 @@ describe('GeminiProvider', () => {
     await expect(provider.generateItinerary(request)).rejects.toThrow(
       'Gemini returned malformed itinerary JSON.'
     )
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_INVALID_RESPONSE',
+    } satisfies Partial<GeminiProviderError>)
   })
 
   it('rejects rich itinerary JSON that is missing required item costs', async () => {

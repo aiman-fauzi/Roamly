@@ -16,7 +16,13 @@
         "db:migrate": "prisma migrate dev --schema=src/db/schema.prisma",
         "db:push": "prisma db push --schema=src/db/schema.prisma",
         "db:studio": "prisma studio",
-        "db:seed": "tsx src/db/seed.ts"
+        "db:seed": "tsx src/db/seed.ts",
+        "import:destinations": "tsx src/import/runDestinationImport.ts",
+        "destinations:audit": "tsx src/services/destinations/runDestinationAudit.ts",
+        "destinations:cleanup": "tsx src/import/runDestinationCleanup.ts",
+        "destinations:facts:import": "tsx src/services/destinations/facts/runManualFactImport.ts",
+        "enrich:destinations": "tsx src/enrichment/runDestinationEnrichment.ts",
+        "itinerary:generate:dev": "tsx src/services/itinerary/runDevItineraryGeneration.ts"
     },
 	"prisma": {
         "schema": "src/db/schema.prisma"
