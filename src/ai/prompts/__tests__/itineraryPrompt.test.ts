@@ -99,6 +99,9 @@ describe('buildItineraryPrompt', () => {
 
     expect(prompt).toContain('Supplied Destination Candidates')
     expect(prompt).toContain('ATTRACTION:central-market')
+    expect(prompt).toContain('Use each supplied candidateId at most once')
+    expect(prompt).toContain('Return no more than 1 total itinerary items')
+    expect(prompt).toContain('Never repeat the same candidateId')
     expect(prompt).toContain('Do not invent attractions')
     expect(prompt).toContain('"candidateId":"ATTRACTION:central-market"')
     expect(prompt).toContain('"entityType":"ATTRACTION"')

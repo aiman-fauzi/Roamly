@@ -238,6 +238,26 @@ describe('GeminiProvider', () => {
         }),
       ],
     })
+
+    expect(generateContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          responseJsonSchema: expect.objectContaining({
+            properties: expect.objectContaining({
+              items: expect.objectContaining({
+                maxItems: 1,
+                items: expect.objectContaining({
+                  properties: expect.objectContaining({
+                    candidateId: { type: 'string', enum: ['ATTRACTION:kiyomizu-dera'] },
+                    day: expect.objectContaining({ maximum: 1 }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        }),
+      })
+    )
   })
 
   it('retries transient Gemini failures once before succeeding', async () => {

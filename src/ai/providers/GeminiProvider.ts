@@ -136,6 +136,37 @@ const COMPACT_RESPONSE_JSON_SCHEMA = {
   required: ['items'],
 }
 
+function compactResponseJsonSchema(options: {
+  allowedCandidateIds?: string[]
+  durationDays?: number
+}) {
+  const candidateIdSchema =
+    options.allowedCandidateIds && options.allowedCandidateIds.length > 0
+      ? { type: 'string', enum: options.allowedCandidateIds }
+      : { type: 'string' }
+
+  return {
+    ...COMPACT_RESPONSE_JSON_SCHEMA,
+    properties: {
+      items: {
+        ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items,
+        maxItems: options.allowedCandidateIds?.length,
+        items: {
+          ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items.items,
+          properties: {
+            ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items.items.properties,
+            candidateId: candidateIdSchema,
+            day: {
+              ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items.items.properties.day,
+              maximum: options.durationDays,
+            },
+          },
+        },
+      },
+    },
+  }
+}
+
 interface GeminiClient {
   models: {
     generateContent(params: GenerateContentParameters): Promise<Pick<GenerateContentResponse, 'text'>>
@@ -481,7 +512,7 @@ export class GeminiProvider implements AIProvider {
     return this.readText(response)
   }
 
-  async generateJson(prompt: string): Promise<string> {
+  async generateJson(prompt: string, responseJsonSchema: object = COMPACT_RESPONSE_JSON_SCHEMA): Promise<string> {
     const jsonPrompt = [
       prompt,
       '',
@@ -491,18 +522,25 @@ export class GeminiProvider implements AIProvider {
       'Do not include code fences.',
     ].join('\n')
 
-    const response = await this.sendPrompt(jsonPrompt, true)
+    const response = await this.sendPrompt(jsonPrompt, true, responseJsonSchema)
     return this.readText(response)
   }
 
   async generateItinerary(request: GenerateItineraryRequest): Promise<GenerateItineraryResponse> {
-    const rawText = await this.generateJson(buildItineraryPrompt(request))
+    const rawText = await this.generateJson(
+      buildItineraryPrompt(request),
+      compactResponseJsonSchema({
+        allowedCandidateIds: request.destinationContext?.candidates.map((candidate) => candidate.id),
+        durationDays: request.durationDays,
+      })
+    )
     return parseItineraryJson(rawText, request)
   }
 
   private async sendPrompt(
     prompt: string,
-    jsonResponse: boolean
+    jsonResponse: boolean,
+    responseJsonSchema: object = COMPACT_RESPONSE_JSON_SCHEMA
   ): Promise<Pick<GenerateContentResponse, 'text'>> {
     const startedAt = Date.now()
     const params: GenerateContentParameters = {
@@ -519,7 +557,7 @@ export class GeminiProvider implements AIProvider {
         ...(jsonResponse
           ? {
               responseMimeType: 'application/json',
-              responseJsonSchema: COMPACT_RESPONSE_JSON_SCHEMA,
+              responseJsonSchema,
             }
           : {}),
       },

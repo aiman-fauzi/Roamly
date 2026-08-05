@@ -21,6 +21,8 @@ function formatDestinationContext(request: GenerateItineraryRequest): string[] {
     '## Supplied Destination Candidates',
     'Use only these destination candidates for place-based itinerary items.',
     'Every item must reference one supplied candidateId.',
+    'Use each supplied candidateId at most once. Never repeat a candidateId across days or time slots.',
+    `Return no more than ${compactContext.candidates.length} total itinerary items.`,
     'Do not invent attractions, restaurants, hotels, activities, addresses, coordinates, prices, or opening hours.',
     'If priceStatus is UNKNOWN, do not invent a price.',
     JSON.stringify(compactContext),
@@ -109,6 +111,7 @@ export function buildItineraryPrompt(request: GenerateItineraryRequest): string 
     `Use day values from 1 to ${request.durationDays}.`,
     'Use startTime as HH:mm in local destination time.',
     'Keep reason under 120 characters.',
+    'Never repeat the same candidateId. It is better to return fewer items than to duplicate a candidateId.',
     'Do not output titles, descriptions, coordinates, prices, budget, exchange rates, roadmap, notes, or transport.',
     'The backend will enrich valid candidate IDs from Supabase metadata.'
   )

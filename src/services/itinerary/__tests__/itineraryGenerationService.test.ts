@@ -1,5 +1,5 @@
 import { TripStatus } from '@prisma/client'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GeminiProviderError } from '@/ai/providers/GeminiProvider'
 import type { GenerateItineraryResponse } from '@/ai/types'
@@ -177,6 +177,7 @@ function createService(overrides: Partial<ConstructorParameters<typeof Itinerary
         fromCache: false,
       }),
       generateItinerary: vi.fn().mockResolvedValue(itinerary()),
+      resolveCandidateDiagnostics: vi.fn().mockResolvedValue(new Map()),
       persistTrip,
       ...overrides,
     }),
@@ -184,6 +185,11 @@ function createService(overrides: Partial<ConstructorParameters<typeof Itinerary
 }
 
 describe('ItineraryGenerationService', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+
   it('runs a dry-run without persisting the validated itinerary', async () => {
     const { service, persistTrip } = createService()
 
@@ -234,6 +240,9 @@ describe('ItineraryGenerationService', () => {
   it('rejects unknown candidate IDs before persistence', async () => {
     const { service, persistTrip } = createService({
       generateItinerary: vi.fn().mockResolvedValue(itinerary('ATTRACTION:unknown')),
+      resolveCandidateDiagnostics: vi.fn().mockResolvedValue(new Map([
+        ['ATTRACTION:unknown', { name: 'Archived Attraction', deletedAt: '2026-08-01T00:00:00.000Z' }],
+      ])),
     })
 
     await expect(service.generate({ tripId: 'trip-1', maxCandidates: 1, persist: true })).rejects.toMatchObject({
@@ -243,7 +252,51 @@ describe('ItineraryGenerationService', () => {
         category: 'AI_CONTRACT_VIOLATION',
         previousItineraryPreserved: false,
         details: expect.objectContaining({
+          returnedCandidateIds: ['ATTRACTION:unknown'],
+          returnedCandidateDetails: [{
+            id: 'ATTRACTION:unknown',
+            name: 'Archived Attraction',
+            allowed: false,
+            deletedAt: '2026-08-01T00:00:00.000Z',
+          }],
+          unsupportedCandidateIds: ['ATTRACTION:unknown'],
+          unsupportedCandidateDetails: [{
+            id: 'ATTRACTION:unknown',
+            name: 'Archived Attraction',
+            deletedAt: '2026-08-01T00:00:00.000Z',
+          }],
           validationIssues: expect.arrayContaining([expect.stringContaining('unknown')]),
+        }),
+      }),
+    } satisfies Partial<ItineraryGenerationError>)
+    expect(persistTrip).not.toHaveBeenCalled()
+  })
+
+  it('reports duplicate returned candidate IDs before persistence', async () => {
+    const duplicateItinerary = itinerary()
+    duplicateItinerary.days[0].afternoon = [
+      {
+        ...duplicateItinerary.days[0].morning[0],
+        time: '14:00',
+      },
+    ]
+    const { service, persistTrip } = createService({
+      generateItinerary: vi.fn().mockResolvedValue(duplicateItinerary),
+    })
+
+    await expect(service.generate({ tripId: 'trip-1', maxCandidates: 1, persist: true })).rejects.toMatchObject({
+      code: 'AI_CONTRACT_VIOLATION',
+      status: 422,
+      details: expect.objectContaining({
+        details: expect.objectContaining({
+          returnedCandidateIds: ['ATTRACTION:central-market', 'ATTRACTION:central-market'],
+          returnedCandidateDetails: [
+            { id: 'ATTRACTION:central-market', name: 'Central Market', allowed: true },
+            { id: 'ATTRACTION:central-market', name: 'Central Market', allowed: true },
+          ],
+          unsupportedCandidateIds: [],
+          duplicateCandidateIds: ['ATTRACTION:central-market'],
+          validationIssues: expect.arrayContaining([expect.stringContaining('duplicated')]),
         }),
       }),
     } satisfies Partial<ItineraryGenerationError>)

@@ -13,10 +13,11 @@ import {
   ItineraryCandidateValidationError,
   validateItineraryCandidateContract,
 } from '@/services/destinations/itineraryValidation'
-import type {
-  DestinationEntityType,
-  DestinationRetrievalResult,
-  GeminiDestinationContext,
+import {
+  DESTINATION_ENTITY_TYPES,
+  type DestinationEntityType,
+  type DestinationRetrievalResult,
+  type GeminiDestinationContext,
 } from '@/services/destinations/types'
 import {
   inferDestinationCurrency,
@@ -47,6 +48,13 @@ export interface ItineraryGenerationOptions {
   persist?: boolean
 }
 
+interface CandidateDiagnostic {
+  name: string
+  deletedAt: string | null
+}
+
+type CandidateDiagnosticsById = Map<string, CandidateDiagnostic>
+
 export interface ItineraryGenerationSummary {
   tripId: string
   mode: ItineraryGenerationMode
@@ -73,6 +81,19 @@ export interface ItineraryGenerationSummary {
   geminiItemsReturned: number
   validItems: number
   rejectedItems: number
+  returnedCandidateIds: string[]
+  returnedCandidateDetails: Array<{
+    id: string
+    name?: string
+    allowed: boolean
+    deletedAt?: string | null
+  }>
+  unsupportedCandidateIds: string[]
+  unsupportedCandidateDetails: Array<{
+    id: string
+    name?: string
+    deletedAt?: string | null
+  }>
   unknownCandidateIds: string[]
   duplicateCandidateIds: string[]
   validationStatus: 'PASSED' | 'FAILED'
@@ -139,6 +160,7 @@ interface ItineraryGenerationDependencies {
     quoteCurrency: string
   }) => Promise<ExchangeRateResult>
   generateItinerary?: (request: GenerateItineraryRequest) => Promise<GenerateItineraryResponse>
+  resolveCandidateDiagnostics?: (candidateIds: string[]) => Promise<CandidateDiagnosticsById>
   persistTrip?: (tripId: string, status: TripStatus, itineraryJson: object) => Promise<Trip>
 }
 
@@ -211,6 +233,70 @@ function readCandidateIds(itinerary: GenerateItineraryResponse): string[] {
   ])
 }
 
+function parseCandidateId(candidateId: string): { entityType: DestinationEntityType; id: string } | null {
+  const [entityType, ...rest] = candidateId.split(':')
+  if (!DESTINATION_ENTITY_TYPES.includes(entityType as DestinationEntityType) || rest.length === 0) return null
+  return { entityType: entityType as DestinationEntityType, id: rest.join(':') }
+}
+
+async function defaultResolveCandidateDiagnostics(candidateIds: string[]): Promise<CandidateDiagnosticsById> {
+  const idsByType = new Map<DestinationEntityType, Set<string>>()
+  for (const candidateId of new Set(candidateIds)) {
+    const parsed = parseCandidateId(candidateId)
+    if (!parsed) continue
+    const ids = idsByType.get(parsed.entityType) ?? new Set<string>()
+    ids.add(parsed.id)
+    idsByType.set(parsed.entityType, ids)
+  }
+
+  const [attractions, restaurants, hotels, activities] = await Promise.all([
+    prisma.attraction.findMany({
+      where: { id: { in: [...(idsByType.get('ATTRACTION') ?? [])] } },
+      select: { id: true, name: true, deletedAt: true },
+    }),
+    prisma.restaurant.findMany({
+      where: { id: { in: [...(idsByType.get('RESTAURANT') ?? [])] } },
+      select: { id: true, name: true, deletedAt: true },
+    }),
+    prisma.hotel.findMany({
+      where: { id: { in: [...(idsByType.get('HOTEL') ?? [])] } },
+      select: { id: true, name: true, deletedAt: true },
+    }),
+    prisma.activity.findMany({
+      where: { id: { in: [...(idsByType.get('ACTIVITY') ?? [])] } },
+      select: { id: true, name: true, deletedAt: true },
+    }),
+  ])
+
+  const diagnostics: CandidateDiagnosticsById = new Map()
+  for (const record of attractions) {
+    diagnostics.set(`ATTRACTION:${record.id}`, {
+      name: record.name,
+      deletedAt: record.deletedAt?.toISOString() ?? null,
+    })
+  }
+  for (const record of restaurants) {
+    diagnostics.set(`RESTAURANT:${record.id}`, {
+      name: record.name,
+      deletedAt: record.deletedAt?.toISOString() ?? null,
+    })
+  }
+  for (const record of hotels) {
+    diagnostics.set(`HOTEL:${record.id}`, {
+      name: record.name,
+      deletedAt: record.deletedAt?.toISOString() ?? null,
+    })
+  }
+  for (const record of activities) {
+    diagnostics.set(`ACTIVITY:${record.id}`, {
+      name: record.name,
+      deletedAt: record.deletedAt?.toISOString() ?? null,
+    })
+  }
+
+  return diagnostics
+}
+
 function duplicateValues(values: string[]): string[] {
   const seen = new Set<string>()
   const duplicates = new Set<string>()
@@ -219,6 +305,51 @@ function duplicateValues(values: string[]): string[] {
     seen.add(value)
   }
   return [...duplicates]
+}
+
+function returnedCandidateDetails(
+  returnedCandidateIds: string[],
+  context: GeminiDestinationContext,
+  unsupportedDiagnostics: CandidateDiagnosticsById = new Map()
+): ItineraryGenerationSummary['returnedCandidateDetails'] {
+  const candidateNames = new Map(context.candidates.map((candidate) => [candidate.id, candidate.name]))
+  return returnedCandidateIds.map((id) => {
+    const diagnostic = unsupportedDiagnostics.get(id)
+    return {
+      id,
+      name: candidateNames.get(id) ?? diagnostic?.name,
+      allowed: candidateNames.has(id),
+      deletedAt: diagnostic?.deletedAt,
+    }
+  })
+}
+
+function logAllowedCandidateDiagnostics(base: Pick<ItineraryGenerationSummary, 'tripId' | 'candidateIds'>) {
+  console.warn('[itinerary] allowed Gemini candidate IDs', {
+    tripId: base.tripId,
+    allowedCandidates: base.candidateIds.map((candidate) => ({
+      id: candidate.id,
+      type: candidate.type,
+      name: candidate.name,
+    })),
+  })
+}
+
+function logCandidateContractDiagnostics(summary: ItineraryGenerationSummary) {
+  console.warn('[itinerary] candidate contract violation diagnostics', {
+    tripId: summary.tripId,
+    allowedCandidates: summary.candidateIds.map((candidate) => ({
+      id: candidate.id,
+      type: candidate.type,
+      name: candidate.name,
+    })),
+    returnedCandidateIds: summary.returnedCandidateIds,
+    returnedCandidateDetails: summary.returnedCandidateDetails,
+    unsupportedCandidateIds: summary.unsupportedCandidateIds,
+    unsupportedCandidateDetails: summary.unsupportedCandidateDetails,
+    duplicateCandidateIds: summary.duplicateCandidateIds,
+    validationIssues: summary.validationIssues,
+  })
 }
 
 function candidateTypeCounts(context: GeminiDestinationContext): Record<DestinationEntityType, number> {
@@ -240,6 +371,10 @@ function validationSummary(
     | 'geminiItemsReturned'
     | 'validItems'
     | 'rejectedItems'
+    | 'returnedCandidateIds'
+    | 'returnedCandidateDetails'
+    | 'unsupportedCandidateIds'
+    | 'unsupportedCandidateDetails'
     | 'unknownCandidateIds'
     | 'duplicateCandidateIds'
     | 'validationStatus'
@@ -247,12 +382,22 @@ function validationSummary(
     | 'persisted'
     | 'persistenceResult'
   >,
-  persist: boolean
+  persist: boolean,
+  unsupportedDiagnostics: CandidateDiagnosticsById = new Map()
 ): ItineraryGenerationSummary {
   const candidateIdSet = new Set(context.candidates.map((candidate) => candidate.id))
   const returnedCandidateIds = readCandidateIds(itinerary)
   const unknownCandidateIds = [...new Set(returnedCandidateIds.filter((id) => !candidateIdSet.has(id)))]
   const duplicateCandidateIds = duplicateValues(returnedCandidateIds)
+  const returnedDetails = returnedCandidateDetails(returnedCandidateIds, context, unsupportedDiagnostics)
+  const unsupportedDetails = unknownCandidateIds.map((id) => {
+    const detail = returnedDetails.find((entry) => entry.id === id)
+    return {
+      id,
+      name: detail?.name,
+      deletedAt: detail?.deletedAt,
+    }
+  })
   const itemCount = countItineraryItems(itinerary)
   const validationFailed = validationIssues.length > 0
 
@@ -261,6 +406,10 @@ function validationSummary(
     geminiItemsReturned: itemCount,
     validItems: validationFailed ? 0 : itemCount,
     rejectedItems: validationFailed ? itemCount : 0,
+    returnedCandidateIds,
+    returnedCandidateDetails: returnedDetails,
+    unsupportedCandidateIds: unknownCandidateIds,
+    unsupportedCandidateDetails: unsupportedDetails,
     unknownCandidateIds,
     duplicateCandidateIds,
     validationStatus: validationFailed ? 'FAILED' : 'PASSED',
@@ -276,6 +425,10 @@ function generationFailureSummary(
     | 'geminiItemsReturned'
     | 'validItems'
     | 'rejectedItems'
+    | 'returnedCandidateIds'
+    | 'returnedCandidateDetails'
+    | 'unsupportedCandidateIds'
+    | 'unsupportedCandidateDetails'
     | 'unknownCandidateIds'
     | 'duplicateCandidateIds'
     | 'validationStatus'
@@ -291,6 +444,10 @@ function generationFailureSummary(
     geminiItemsReturned: 0,
     validItems: 0,
     rejectedItems: 0,
+    returnedCandidateIds: [],
+    returnedCandidateDetails: [],
+    unsupportedCandidateIds: [],
+    unsupportedCandidateDetails: [],
     unknownCandidateIds: [],
     duplicateCandidateIds: [],
     validationStatus: 'FAILED',
@@ -336,6 +493,7 @@ export class ItineraryGenerationService {
         ((query) => new DestinationRetrievalService().retrieve(query)),
       resolveExchangeRate: dependencies.resolveExchangeRate ?? resolveExchangeRate,
       generateItinerary: dependencies.generateItinerary ?? generateItinerary,
+      resolveCandidateDiagnostics: dependencies.resolveCandidateDiagnostics ?? defaultResolveCandidateDiagnostics,
       persistTrip: dependencies.persistTrip ?? updateTripStatus,
     }
   }
@@ -462,6 +620,7 @@ export class ItineraryGenerationService {
         preferredLanguage: profile.preferredLanguage,
         destinationContext,
       }
+      logAllowedCandidateDiagnostics(baseSummary)
       let itinerary: GenerateItineraryResponse
       try {
         const generationStartedAt = Date.now()
@@ -492,7 +651,31 @@ export class ItineraryGenerationService {
         validateItineraryCandidateContract(itinerary, destinationContext, { durationDays })
       } catch (error) {
         if (error instanceof ItineraryCandidateValidationError) {
-          const summary = validationSummary(itinerary, destinationContext, error.issues, baseSummary, Boolean(options.persist))
+          const candidateIdSet = new Set(destinationContext.candidates.map((candidate) => candidate.id))
+          const unsupportedCandidateIds = [
+            ...new Set(readCandidateIds(itinerary).filter((candidateId) => !candidateIdSet.has(candidateId))),
+          ]
+          let unsupportedDiagnostics: CandidateDiagnosticsById = new Map()
+          if (unsupportedCandidateIds.length > 0) {
+            try {
+              unsupportedDiagnostics = await this.dependencies.resolveCandidateDiagnostics(unsupportedCandidateIds)
+            } catch (diagnosticError) {
+              console.warn('[itinerary] failed to resolve unsupported candidate names', {
+                tripId: trip.id,
+                unsupportedCandidateIds,
+                error: diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError),
+              })
+            }
+          }
+          const summary = validationSummary(
+            itinerary,
+            destinationContext,
+            error.issues,
+            baseSummary,
+            Boolean(options.persist),
+            unsupportedDiagnostics
+          )
+          logCandidateContractDiagnostics(summary)
           throw new ItineraryGenerationError(
             'AI_CONTRACT_VIOLATION',
             'Generated itinerary referenced unsupported destination records.',

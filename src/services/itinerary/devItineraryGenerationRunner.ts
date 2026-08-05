@@ -97,6 +97,22 @@ function printSummary(summary: Awaited<ReturnType<ItineraryGenerationService['ge
   console.warn(`  items returned: ${summary.geminiItemsReturned}`)
   console.warn(`  valid items: ${summary.validItems}`)
   console.warn(`  rejected items: ${summary.rejectedItems}`)
+  console.warn(`  returned candidate IDs: ${summary.returnedCandidateIds.join(', ') || 'none'}`)
+  if (summary.returnedCandidateDetails.length > 0) {
+    console.warn('[itinerary:dev] returned candidate detail')
+    for (const candidate of summary.returnedCandidateDetails) {
+      const deletionNote = candidate.deletedAt ? ` | deletedAt ${candidate.deletedAt}` : ''
+      console.warn(`  - ${candidate.id} | ${candidate.allowed ? 'allowed' : 'unsupported'} | ${candidate.name ?? 'name unavailable'}${deletionNote}`)
+    }
+  }
+  console.warn(`  unsupported candidate IDs: ${summary.unsupportedCandidateIds.join(', ') || 'none'}`)
+  if (summary.unsupportedCandidateDetails.length > 0) {
+    console.warn('[itinerary:dev] unsupported candidate detail')
+    for (const candidate of summary.unsupportedCandidateDetails) {
+      const deletionNote = candidate.deletedAt ? ` | deletedAt ${candidate.deletedAt}` : ''
+      console.warn(`  - ${candidate.id} | ${candidate.name ?? 'name unavailable'}${deletionNote}`)
+    }
+  }
   console.warn(`  unknown candidate IDs: ${summary.unknownCandidateIds.join(', ') || 'none'}`)
   console.warn(`  duplicate candidate IDs: ${summary.duplicateCandidateIds.join(', ') || 'none'}`)
   console.warn(`  schema/contract validation: ${summary.validationStatus}`)
