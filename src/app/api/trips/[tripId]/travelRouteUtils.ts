@@ -47,10 +47,11 @@ export async function requireAuthenticatedTrip(
       ? await timing.measure('authentication', authenticate)
       : await authenticate()
     const syncUser = () => ensureUser(user.id, user.email)
-    if (timing) await timing.measure('user_sync', syncUser)
-    else await syncUser()
     const findTrip = () => getTripById(tripId, user.id)
-    const trip = timing ? await timing.measure('trip_ownership_lookup', findTrip) : await findTrip()
+    const [, trip] = await Promise.all([
+      timing ? timing.measure('user_sync', syncUser) : syncUser(),
+      timing ? timing.measure('trip_ownership_lookup', findTrip) : findTrip(),
+    ])
     if (!trip) return { response: err('Trip not found', 'NOT_FOUND', 404) }
     return { trip, userId: user.id }
   } catch (error) {
