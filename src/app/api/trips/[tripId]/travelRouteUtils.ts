@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { ExchangeRateError } from '@/services/exchangeRateService'
 import type { TravelOfferResultStatus } from '@/services/travel/offers/types'
 import { TripOfferSelectionError } from '@/services/travel/persistence/tripOfferSelectionService'
+import { TravelSelectionError } from '@/services/travel/persistence/tripTravelSelectionService'
 import { TravelPlanningError } from '@/services/travel/planning/tripTravelPlanningService'
 import { TripTravelProfileError } from '@/services/travel/profile/tripTravelProfileService'
 import { TripTravelSearchRequestError } from '@/services/travel/profile/tripTravelSearchRequestService'
@@ -25,7 +26,9 @@ export function err(error: string, code: string, status: number, details?: unkno
   return NextResponse.json<ApiErrorResponse>({ error, code, details }, { status })
 }
 
-export async function readJsonBody(request: Request): Promise<{ body: unknown } | { response: NextResponse }> {
+export async function readJsonBody(
+  request: Request
+): Promise<{ body: unknown } | { response: NextResponse }> {
   try {
     return { body: await request.json() }
   } catch {
@@ -33,7 +36,9 @@ export async function readJsonBody(request: Request): Promise<{ body: unknown } 
   }
 }
 
-export async function requireAuthenticatedTrip(tripId: string): Promise<AuthenticatedTrip | { response: NextResponse }> {
+export async function requireAuthenticatedTrip(
+  tripId: string
+): Promise<AuthenticatedTrip | { response: NextResponse }> {
   const supabase = await createClient()
   const {
     data: { session },
@@ -55,6 +60,7 @@ export function offerStatusCode(status: TravelOfferResultStatus): number {
   if (status === 'RATE_LIMITED') return 429
   if (status === 'TEMPORARY_FAILURE' || status === 'PROVIDER_UNAVAILABLE') return 503
   if (status === 'INVALID_REQUEST') return 400
+  if (status === 'NO_RESULTS') return 404
   return 200
 }
 
@@ -69,6 +75,9 @@ export function routeErrorResponse(error: unknown) {
     return err(error.message, error.code, error.status, error.details)
   }
   if (error instanceof TripOfferSelectionError) {
+    return err(error.message, error.code, error.status, error.details)
+  }
+  if (error instanceof TravelSelectionError) {
     return err(error.message, error.code, error.status, error.details)
   }
   if (error instanceof TripTravelSearchRequestError) {

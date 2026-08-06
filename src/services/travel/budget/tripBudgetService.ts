@@ -1,6 +1,11 @@
 import type { RankedDestinationCandidate } from '@/services/destinations/types'
 import { resolveExchangeRate, type ExchangeRateResult } from '@/services/exchangeRateService'
-import type { BudgetCategory, TripBudgetSummary } from '@/services/travel/budget/types'
+import type {
+  BudgetCategory,
+  EstimatedCost,
+  EstimatedCostBasis,
+  TripBudgetSummary,
+} from '@/services/travel/budget/types'
 import {
   addMoney,
   compareMoney,
@@ -28,7 +33,10 @@ export interface TripBudgetInput {
 }
 
 export interface TripBudgetServiceOptions {
-  resolveRate?: (input: { baseCurrency: string; quoteCurrency: string }) => Promise<ExchangeRateResult>
+  resolveRate?: (input: {
+    baseCurrency: string
+    quoteCurrency: string
+  }) => Promise<ExchangeRateResult>
   now?: () => Date
 }
 
@@ -78,17 +86,26 @@ async function convertIfNeeded(
 function category(input: {
   status: BudgetCategory['status']
   amount: Money
+  basis: EstimatedCostBasis
   assumptions?: string[]
   missingData?: string[]
   converted?: ConvertedMoney
   travelerCount: number
 }): BudgetCategory {
+  const cost: EstimatedCost = {
+    amount: input.status === 'UNKNOWN' ? null : input.amount,
+    currency: input.amount.currency,
+    basis: input.basis,
+    status: input.status === 'UNKNOWN' ? 'unavailable' : 'mock_estimate',
+  }
+
   return {
     status: input.status,
     amount: input.amount,
     original: input.converted?.original,
     converted: input.converted,
     perPersonAmount: divideMoney(input.amount, Math.max(1, input.travelerCount)),
+    cost,
     assumptions: input.assumptions ?? [],
     missingData: input.missingData ?? [],
   }
@@ -116,24 +133,34 @@ export class TripBudgetService {
     const missingData: string[] = []
 
     const flightConverted = input.selectedFlightOffer
-      ? await convertIfNeeded(input.selectedFlightOffer.totalPrice, currency, this.options.resolveRate)
+      ? await convertIfNeeded(
+          input.selectedFlightOffer.totalPrice,
+          currency,
+          this.options.resolveRate
+        )
       : null
     const flight = category({
       status: flightConverted ? 'KNOWN' : 'UNKNOWN',
       amount: flightConverted?.converted ?? zero(currency),
       converted: flightConverted ?? undefined,
       travelerCount,
+      basis: 'whole_party',
       missingData: flightConverted ? [] : ['No selected flight offer.'],
     })
 
     const hotelConverted = input.selectedHotelOffer
-      ? await convertIfNeeded(input.selectedHotelOffer.totalPrice, currency, this.options.resolveRate)
+      ? await convertIfNeeded(
+          input.selectedHotelOffer.totalPrice,
+          currency,
+          this.options.resolveRate
+        )
       : null
     const accommodation = category({
       status: hotelConverted ? 'KNOWN' : 'UNKNOWN',
       amount: hotelConverted?.converted ?? zero(currency),
       converted: hotelConverted ?? undefined,
       travelerCount,
+      basis: 'per_trip',
       missingData: hotelConverted ? [] : ['No selected hotel offer.'],
     })
 
@@ -143,7 +170,11 @@ export class TripBudgetService {
       if (candidate.entityType !== 'ATTRACTION') continue
       const price = applicableTicketPrice(candidate)
       if (price) {
-        const converted = await convertIfNeeded(multiplyMoney(price, travelerCount), currency, this.options.resolveRate)
+        const converted = await convertIfNeeded(
+          multiplyMoney(price, travelerCount),
+          currency,
+          this.options.resolveRate
+        )
         attractionPrices.push(converted.converted)
       } else {
         missingData.push(`Unknown verified ticket price for ${candidate.name}.`)
@@ -159,45 +190,65 @@ export class TripBudgetService {
             : 'KNOWN',
       amount: attractionsAmount,
       travelerCount,
-      assumptions: attractionPrices.length > 0 ? ['Verified attraction ticket prices are multiplied by traveler count.'] : [],
+      basis: 'per_person',
+      assumptions:
+        attractionPrices.length > 0
+          ? ['Verified attraction ticket prices are multiplied by traveler count.']
+          : [],
       missingData: missingData.filter((entry) => entry.startsWith('Unknown verified ticket price')),
     })
 
     const dailyFoodBudget =
-      input.dailyFoodBudget ?? readMoneyEnv('DEFAULT_DAILY_FOOD_BUDGET', DEFAULT_DAILY_FOOD_BUDGET, currency)
+      input.dailyFoodBudget ??
+      readMoneyEnv('DEFAULT_DAILY_FOOD_BUDGET', DEFAULT_DAILY_FOOD_BUDGET, currency)
     const food = category({
       status: 'ESTIMATED',
       amount: multiplyMoney(dailyFoodBudget, durationDays * travelerCount),
       travelerCount,
-      assumptions: [`Food uses configured daily allowance ${dailyFoodBudget.amount} ${currency} per traveler.`],
+      basis: 'per_person',
+      assumptions: [
+        `Food uses configured daily allowance ${dailyFoodBudget.amount} ${currency} per traveler.`,
+      ],
     })
 
     const dailyLocalTransportBudget =
       input.dailyLocalTransportBudget ??
-      readMoneyEnv('DEFAULT_DAILY_LOCAL_TRANSPORT_BUDGET', DEFAULT_DAILY_LOCAL_TRANSPORT_BUDGET, currency)
+      readMoneyEnv(
+        'DEFAULT_DAILY_LOCAL_TRANSPORT_BUDGET',
+        DEFAULT_DAILY_LOCAL_TRANSPORT_BUDGET,
+        currency
+      )
     const localTransport = category({
       status: 'ESTIMATED',
       amount: multiplyMoney(dailyLocalTransportBudget, durationDays * travelerCount),
       travelerCount,
+      basis: 'per_person',
       assumptions: [
         `Local transport uses configured daily allowance ${dailyLocalTransportBudget.amount} ${currency} per traveler.`,
       ],
     })
 
     const subtotal = addMoney(
-      [flight.amount, accommodation.amount, attractions.amount, food.amount, localTransport.amount],
+      [flight, accommodation, attractions, food, localTransport]
+        .filter((item) => item.status !== 'UNKNOWN')
+        .map((item) => item.amount),
       currency
     )
     const contingencyPercent =
-      input.contingencyPercent ?? readPercentEnv('TRIP_BUDGET_CONTINGENCY_PERCENT', DEFAULT_CONTINGENCY_PERCENT)
+      input.contingencyPercent ??
+      readPercentEnv('TRIP_BUDGET_CONTINGENCY_PERCENT', DEFAULT_CONTINGENCY_PERCENT)
     const contingency = category({
       status: 'ESTIMATED',
       amount: percentMoney(subtotal, contingencyPercent),
       travelerCount,
+      basis: 'per_trip',
       assumptions: [`Contingency is ${contingencyPercent}% of known and estimated subtotal.`],
     })
     const totalAmount = addMoney([subtotal, contingency.amount], currency)
-    const userBudgetOriginal = input.userBudget ? money(input.userBudget.amount, input.userBudget.currency) : undefined
+    const totalIsAvailable = flight.status !== 'UNKNOWN' && accommodation.status !== 'UNKNOWN'
+    const userBudgetOriginal = input.userBudget
+      ? money(input.userBudget.amount, input.userBudget.currency)
+      : undefined
     const userBudget = userBudgetOriginal
       ? (await convertIfNeeded(userBudgetOriginal, currency, this.options.resolveRate)).converted
       : undefined
@@ -211,6 +262,7 @@ export class TripBudgetService {
 
     return {
       currency,
+      travellers: travelerCount,
       flight,
       accommodation,
       attractions,
@@ -222,7 +274,22 @@ export class TripBudgetService {
         perPersonAmount: divideMoney(totalAmount, travelerCount),
         userBudget,
         remainingBudget,
-        isBudgetExceeded: remainingBudget ? compareMoney(remainingBudget, zero(currency)) < 0 : undefined,
+        isBudgetExceeded: remainingBudget
+          ? compareMoney(remainingBudget, zero(currency)) < 0
+          : undefined,
+      },
+      costSummary: {
+        currency,
+        travellers: travelerCount,
+        wholeTripTotal: totalIsAvailable ? totalAmount : null,
+        estimatedPerPersonTotal: totalIsAvailable ? divideMoney(totalAmount, travelerCount) : null,
+        flights: flight.cost!,
+        hotel: accommodation.cost!,
+        attractions: attractions.cost!,
+        food: food.cost!,
+        localTransport: localTransport.cost!,
+        contingency: contingency.cost!,
+        status: 'mock_estimate',
       },
       assumptions,
       missingData: [...new Set(missingData)],

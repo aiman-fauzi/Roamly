@@ -41,7 +41,12 @@ const PROVIDER_MAP: Record<string, ProviderFactory> = {
 function isFallbackEligible(error: unknown): boolean {
   return (
     error instanceof GeminiProviderError &&
-    (error.code === 'AI_TIMEOUT' || error.code === 'AI_RATE_LIMITED' || error.code === 'AI_TEMPORARY_FAILURE')
+    (error.code === 'AI_TIMEOUT' ||
+      error.code === 'AI_RATE_LIMITED' ||
+      error.code === 'AI_QUOTA_EXCEEDED' ||
+      error.code === 'AI_TEMPORARY_FAILURE' ||
+      error.code === 'AI_NETWORK_FAILURE' ||
+      error.code === 'AI_MODEL_UNAVAILABLE')
   )
 }
 

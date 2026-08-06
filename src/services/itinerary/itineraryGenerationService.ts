@@ -34,8 +34,14 @@ export type ItineraryGenerationMode = 'dry-run' | 'persist'
 type ItineraryGenerationErrorCategory =
   | 'AI_TIMEOUT'
   | 'AI_RATE_LIMITED'
+  | 'AI_QUOTA_EXCEEDED'
   | 'AI_TEMPORARY_FAILURE'
+  | 'AI_NETWORK_FAILURE'
+  | 'AI_MODEL_UNAVAILABLE'
   | 'AI_INVALID_RESPONSE'
+  | 'AI_SCHEMA_VALIDATION_FAILURE'
+  | 'AI_UNSUPPORTED_CANDIDATE'
+  | 'AI_AUTHENTICATION_FAILURE'
   | 'AI_AUTHENTICATION_FAILED'
   | 'AI_UNKNOWN_FAILURE'
   | 'AI_CONTRACT_VIOLATION'
@@ -238,13 +244,18 @@ function readCandidateIds(itinerary: GenerateItineraryResponse): string[] {
   ])
 }
 
-function parseCandidateId(candidateId: string): { entityType: DestinationEntityType; id: string } | null {
+function parseCandidateId(
+  candidateId: string
+): { entityType: DestinationEntityType; id: string } | null {
   const [entityType, ...rest] = candidateId.split(':')
-  if (!DESTINATION_ENTITY_TYPES.includes(entityType as DestinationEntityType) || rest.length === 0) return null
+  if (!DESTINATION_ENTITY_TYPES.includes(entityType as DestinationEntityType) || rest.length === 0)
+    return null
   return { entityType: entityType as DestinationEntityType, id: rest.join(':') }
 }
 
-async function defaultResolveCandidateDiagnostics(candidateIds: string[]): Promise<CandidateDiagnosticsById> {
+async function defaultResolveCandidateDiagnostics(
+  candidateIds: string[]
+): Promise<CandidateDiagnosticsById> {
   const idsByType = new Map<DestinationEntityType, Set<string>>()
   for (const candidateId of new Set(candidateIds)) {
     const parsed = parseCandidateId(candidateId)
@@ -317,7 +328,9 @@ function returnedCandidateDetails(
   context: GeminiDestinationContext,
   unsupportedDiagnostics: CandidateDiagnosticsById = new Map()
 ): ItineraryGenerationSummary['returnedCandidateDetails'] {
-  const candidateNames = new Map(context.candidates.map((candidate) => [candidate.id, candidate.name]))
+  const candidateNames = new Map(
+    context.candidates.map((candidate) => [candidate.id, candidate.name])
+  )
   return returnedCandidateIds.map((id) => {
     const diagnostic = unsupportedDiagnostics.get(id)
     return {
@@ -329,7 +342,9 @@ function returnedCandidateDetails(
   })
 }
 
-function logAllowedCandidateDiagnostics(base: Pick<ItineraryGenerationSummary, 'tripId' | 'candidateIds'>) {
+function logAllowedCandidateDiagnostics(
+  base: Pick<ItineraryGenerationSummary, 'tripId' | 'candidateIds'>
+) {
   console.warn('[itinerary] allowed Gemini candidate IDs', {
     tripId: base.tripId,
     allowedCandidates: base.candidateIds.map((candidate) => ({
@@ -369,7 +384,9 @@ function logCandidateContractDiagnostics(summary: ItineraryGenerationSummary) {
   })
 }
 
-function candidateTypeCounts(context: GeminiDestinationContext): Record<DestinationEntityType, number> {
+function candidateTypeCounts(
+  context: GeminiDestinationContext
+): Record<DestinationEntityType, number> {
   return context.candidates.reduce<Record<DestinationEntityType, number>>(
     (counts, candidate) => {
       counts[candidate.type] += 1
@@ -404,9 +421,15 @@ function validationSummary(
 ): ItineraryGenerationSummary {
   const candidateIdSet = new Set(context.candidates.map((candidate) => candidate.id))
   const returnedCandidateIds = readCandidateIds(itinerary)
-  const unknownCandidateIds = [...new Set(returnedCandidateIds.filter((id) => !candidateIdSet.has(id)))]
+  const unknownCandidateIds = [
+    ...new Set(returnedCandidateIds.filter((id) => !candidateIdSet.has(id))),
+  ]
   const duplicateCandidateIds = duplicateValues(returnedCandidateIds)
-  const returnedDetails = returnedCandidateDetails(returnedCandidateIds, context, unsupportedDiagnostics)
+  const returnedDetails = returnedCandidateDetails(
+    returnedCandidateIds,
+    context,
+    unsupportedDiagnostics
+  )
   const unsupportedDetails = unknownCandidateIds.map((id) => {
     const detail = returnedDetails.find((entry) => entry.id === id)
     return {
@@ -475,9 +498,24 @@ function generationFailureSummary(
 }
 
 function aiErrorStatus(error: GeminiProviderError): number {
-  if (error.code === 'AI_RATE_LIMITED') return 429
-  if (error.code === 'AI_TIMEOUT' || error.code === 'AI_TEMPORARY_FAILURE') return 503
-  if (error.code === 'AI_INVALID_RESPONSE') return 502
+  if (error.code === 'AI_RATE_LIMITED' || error.code === 'AI_QUOTA_EXCEEDED') return 429
+  if (
+    error.code === 'AI_TIMEOUT' ||
+    error.code === 'AI_TEMPORARY_FAILURE' ||
+    error.code === 'AI_NETWORK_FAILURE' ||
+    error.code === 'AI_MODEL_UNAVAILABLE'
+  ) {
+    return 503
+  }
+  if (error.code === 'AI_AUTHENTICATION_FAILURE' || error.code === 'AI_AUTHENTICATION_FAILED')
+    return 401
+  if (
+    error.code === 'AI_INVALID_RESPONSE' ||
+    error.code === 'AI_SCHEMA_VALIDATION_FAILURE' ||
+    error.code === 'AI_UNSUPPORTED_CANDIDATE'
+  ) {
+    return 502
+  }
   return 502
 }
 
@@ -486,12 +524,14 @@ function recoverableDetails(input: {
   previousItineraryPreserved: boolean
   retryAfterMs?: number
   details?: unknown
+  providerDiagnostics?: GeminiProviderError['diagnostics']
 }) {
   return {
     recoverable: true,
     category: input.category,
     previousItineraryPreserved: input.previousItineraryPreserved,
     retryAfterMs: input.retryAfterMs,
+    providerDiagnostics: input.providerDiagnostics,
     details: input.details,
   }
 }
@@ -510,7 +550,8 @@ export class ItineraryGenerationService {
         ((query) => new DestinationRetrievalService().retrieve(query)),
       resolveExchangeRate: dependencies.resolveExchangeRate ?? resolveExchangeRate,
       generateItinerary: dependencies.generateItinerary ?? generateItinerary,
-      resolveCandidateDiagnostics: dependencies.resolveCandidateDiagnostics ?? defaultResolveCandidateDiagnostics,
+      resolveCandidateDiagnostics:
+        dependencies.resolveCandidateDiagnostics ?? defaultResolveCandidateDiagnostics,
       persistTrip: dependencies.persistTrip ?? updateTripStatus,
     }
   }
@@ -559,7 +600,8 @@ export class ItineraryGenerationService {
       }
 
       const destinationCurrency =
-        destinationCity.currencyCode ?? inferDestinationCurrency(destination, profile.preferredCurrency)
+        destinationCity.currencyCode ??
+        inferDestinationCurrency(destination, profile.preferredCurrency)
       const exchangeRate = await this.dependencies.resolveExchangeRate({
         baseCurrency: destinationCurrency,
         quoteCurrency: profile.preferredCurrency,
@@ -573,7 +615,7 @@ export class ItineraryGenerationService {
           ...profile.travelInterests,
         ],
         budgetLevel: readBudgetLevel(preferences.travelStyles),
-        limitPerType: 8,
+        limitPerType: Math.max(8, options.maxCandidates ?? defaultMaxCandidates()),
       })
       const destinationContext = buildGeminiDestinationContext(destinationRetrieval, {
         maxCandidates: options.maxCandidates ?? defaultMaxCandidates(),
@@ -594,7 +636,7 @@ export class ItineraryGenerationService {
 
       const baseSummary = {
         tripId: trip.id,
-        mode: options.persist ? 'persist' as const : 'dry-run' as const,
+        mode: options.persist ? ('persist' as const) : ('dry-run' as const),
         destination,
         cityId: destinationCity.id,
         cityName: destinationCity.name,
@@ -606,7 +648,9 @@ export class ItineraryGenerationService {
         contextMaxSerializedSize: destinationContext.maxSerializedSize,
         generationLatencyMs: 0,
         candidateIds: destinationContext.candidates.map((candidate) => {
-          const retrievalCandidate = destinationRetrieval.candidates.find((item) => item.candidateId === candidate.id)
+          const retrievalCandidate = destinationRetrieval.candidates.find(
+            (item) => item.candidateId === candidate.id
+          )
           return {
             id: candidate.id,
             type: candidate.type,
@@ -623,9 +667,16 @@ export class ItineraryGenerationService {
           }
         }),
         candidateTypeCounts: candidateTypeCounts(destinationContext),
-        knownOpeningHoursCount: destinationContext.candidates.filter((candidate) => candidate.openingHoursKnown).length,
-        knownPriceCount: destinationContext.candidates.filter((candidate) => candidate.ticketPriceStatus === 'VERIFIED').length,
-        staleFactCount: destinationContext.candidates.reduce((total, candidate) => total + candidate.staleFactCount, 0),
+        knownOpeningHoursCount: destinationContext.candidates.filter(
+          (candidate) => candidate.openingHoursKnown
+        ).length,
+        knownPriceCount: destinationContext.candidates.filter(
+          (candidate) => candidate.ticketPriceStatus === 'VERIFIED'
+        ).length,
+        staleFactCount: destinationContext.candidates.reduce(
+          (total, candidate) => total + candidate.staleFactCount,
+          0
+        ),
       }
 
       const request: GenerateItineraryRequest = {
@@ -664,6 +715,7 @@ export class ItineraryGenerationService {
               category: error.code,
               previousItineraryPreserved: Boolean(trip.itineraryJson),
               retryAfterMs: error.retryAfterMs,
+              providerDiagnostics: error.diagnostics,
               details: generationFailureSummary(
                 baseSummary,
                 `AI provider failed before itinerary validation: ${error.code}`,
@@ -679,19 +731,27 @@ export class ItineraryGenerationService {
         validateItineraryCandidateContract(itinerary, destinationContext, { durationDays })
       } catch (error) {
         if (error instanceof ItineraryCandidateValidationError) {
-          const candidateIdSet = new Set(destinationContext.candidates.map((candidate) => candidate.id))
+          const candidateIdSet = new Set(
+            destinationContext.candidates.map((candidate) => candidate.id)
+          )
           const unsupportedCandidateIds = [
-            ...new Set(readCandidateIds(itinerary).filter((candidateId) => !candidateIdSet.has(candidateId))),
+            ...new Set(
+              readCandidateIds(itinerary).filter((candidateId) => !candidateIdSet.has(candidateId))
+            ),
           ]
           let unsupportedDiagnostics: CandidateDiagnosticsById = new Map()
           if (unsupportedCandidateIds.length > 0) {
             try {
-              unsupportedDiagnostics = await this.dependencies.resolveCandidateDiagnostics(unsupportedCandidateIds)
+              unsupportedDiagnostics =
+                await this.dependencies.resolveCandidateDiagnostics(unsupportedCandidateIds)
             } catch (diagnosticError) {
               console.warn('[itinerary] failed to resolve unsupported candidate names', {
                 tripId: trip.id,
                 unsupportedCandidateIds,
-                error: diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError),
+                error:
+                  diagnosticError instanceof Error
+                    ? diagnosticError.message
+                    : String(diagnosticError),
               })
             }
           }
@@ -729,7 +789,11 @@ export class ItineraryGenerationService {
       let resultTrip: Trip = trip
 
       if (options.persist) {
-        resultTrip = await this.dependencies.persistTrip(trip.id, TripStatus.COMPLETE, validatedItinerary)
+        resultTrip = await this.dependencies.persistTrip(
+          trip.id,
+          TripStatus.COMPLETE,
+          validatedItinerary
+        )
         summary.persisted = true
         summary.persistenceResult = 'REPLACED_TRIP_ITINERARY'
       }

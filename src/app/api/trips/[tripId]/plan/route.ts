@@ -12,8 +12,48 @@ import {
   persistedTripTravelPlanningRequestSchema,
   tripTravelProfileUpdateSchema,
 } from '@/lib/validations/travelOfferValidation'
-import { TripTravelPlanningService } from '@/services/travel/planning/tripTravelPlanningService'
+import {
+  TravelPlanningError,
+  TripTravelPlanningService,
+} from '@/services/travel/planning/tripTravelPlanningService'
 import { TripTravelProfileService } from '@/services/travel/profile/tripTravelProfileService'
+
+const AI_PREVIEW_FALLBACK_CODES = new Set([
+  'AI_QUOTA_EXCEEDED',
+  'AI_RATE_LIMITED',
+  'AI_TIMEOUT',
+  'AI_TEMPORARY_FAILURE',
+  'AI_NETWORK_FAILURE',
+  'AI_MODEL_UNAVAILABLE',
+])
+
+function planningResponse(
+  result: Awaited<ReturnType<TripTravelPlanningService['previewBudget']>>,
+  generationStatus?: {
+    status: 'planning_preview_due_to_ai_failure'
+    code: string
+    message: string
+  }
+) {
+  return NextResponse.json({
+    trip: result.trip,
+    itinerary: null,
+    itineraryStatus: generationStatus ?? { status: 'not_generated' },
+    budgetSummary: result.budgetSummary,
+    itineraryTravelContext: result.itineraryTravelContext,
+    planningPreview: result.planningPreview,
+    selectedFlightOffer: result.selectedFlightOffer,
+    selectedHotelOffer: result.selectedHotelOffer,
+    flightSearch: result.flightSearch,
+    hotelSearch: result.hotelSearch,
+    destinationContext: {
+      eligibleCandidates: result.summary.eligibleCandidates,
+      candidatesSentToGemini: result.summary.candidatesSentToGemini,
+      omittedCandidates: result.summary.candidatesOmitted,
+    },
+    summary: result.summary,
+  })
+}
 
 export async function POST(request: Request, { params }: RouteContext) {
   const { tripId } = await params
@@ -38,16 +78,21 @@ export async function POST(request: Request, { params }: RouteContext) {
         hasCompleteItinerary: Boolean(guard.trip.itineraryJson),
       })
     }
-    const result = await new TripTravelPlanningService().plan({
+    const planningService = new TripTravelPlanningService()
+    const planningInput = { ...parsed.data, persist: parsed.data.persist ?? true }
+    const result = await planningService.plan({
       tripId,
       userId: guard.userId,
-      input: { ...parsed.data, persist: parsed.data.persist ?? true },
+      input: planningInput,
     })
 
     return NextResponse.json({
       trip: result.trip,
       itinerary: result.itinerary,
+      itineraryStatus: { status: 'generated' },
       budgetSummary: result.budgetSummary,
+      itineraryTravelContext: result.itineraryTravelContext,
+      planningPreview: result.planningPreview,
       selectedFlightOffer: result.selectedFlightOffer,
       selectedHotelOffer: result.selectedHotelOffer,
       flightSearch: result.flightSearch,
@@ -60,6 +105,19 @@ export async function POST(request: Request, { params }: RouteContext) {
       summary: result.summary,
     })
   } catch (error) {
+    if (error instanceof TravelPlanningError && AI_PREVIEW_FALLBACK_CODES.has(error.code)) {
+      const preview = await new TripTravelPlanningService().previewBudget({
+        tripId,
+        userId: guard.userId,
+        input: { ...parsed.data, persist: false },
+      })
+      return planningResponse(preview, {
+        status: 'planning_preview_due_to_ai_failure',
+        code: error.code,
+        message:
+          'We could not generate the full itinerary right now. Your sample travel plan and recommended places are still available.',
+      })
+    }
     return routeErrorResponse(error)
   }
 }

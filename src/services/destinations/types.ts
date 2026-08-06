@@ -108,6 +108,11 @@ export interface DestinationCandidate {
   citySlug: string
   countryName: string
   countrySlug: string
+  primaryName?: string
+  localName?: string | null
+  englishName?: string | null
+  displayName?: string
+  displayNameSource?: string
   name: string
   slug: string
   description?: string | null
@@ -118,6 +123,7 @@ export interface DestinationCandidate {
   source: DestinationImportSource
   sourceUrl?: string | null
   categories: string[]
+  sourceCategories?: string[]
   tags: string[]
   openingHours: DestinationOpeningHourContext[]
   openingHoursStatus: CandidateFactualStatus
@@ -177,6 +183,10 @@ export interface GeminiDestinationCandidateContext {
   id: string
   type: DestinationEntityType
   name: string
+  primaryName?: string
+  localName?: string | null
+  englishName?: string | null
+  displayNameSource?: string
   summary?: string
   latitude: number
   longitude: number

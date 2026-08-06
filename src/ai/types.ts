@@ -1,6 +1,7 @@
 import type { GeminiDestinationContext } from '@/services/destinations/types'
 import type { TripBudgetSummary } from '@/services/travel/budget/types'
 import type { TravelOffersGeminiContext } from '@/services/travel/offers/types'
+import type { ItineraryTravelContext } from '@/services/travel/planning/liveTravelContext'
 import type { DayPlan, Itinerary, ItineraryItem } from '@/types/itinerary'
 
 export type { DayPlan, ItineraryItem }
@@ -28,13 +29,23 @@ export interface GenerateItineraryRequest {
   budgetSummary?: TripBudgetSummary
 }
 
-export type GenerateItineraryResponse = Itinerary
+export type GenerateItineraryResponse = Itinerary & {
+  itineraryTravelContext?: ItineraryTravelContext
+  planningPreview?: ItineraryTravelContext['planningPreview']
+  budgetSummary?: TripBudgetSummary
+}
 
 export type AIErrorCategory =
   | 'AI_TIMEOUT'
   | 'AI_RATE_LIMITED'
+  | 'AI_QUOTA_EXCEEDED'
   | 'AI_TEMPORARY_FAILURE'
+  | 'AI_NETWORK_FAILURE'
+  | 'AI_MODEL_UNAVAILABLE'
   | 'AI_INVALID_RESPONSE'
+  | 'AI_SCHEMA_VALIDATION_FAILURE'
+  | 'AI_UNSUPPORTED_CANDIDATE'
+  | 'AI_AUTHENTICATION_FAILURE'
   | 'AI_AUTHENTICATION_FAILED'
   | 'AI_UNKNOWN_FAILURE'
 

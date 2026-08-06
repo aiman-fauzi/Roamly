@@ -55,12 +55,19 @@ function toCandidateContext(
   return {
     id: candidate.candidateId,
     type: candidate.entityType,
-    name: candidate.name,
+    name: candidate.displayName ?? candidate.name,
+    primaryName: candidate.primaryName,
+    localName: candidate.localName,
+    englishName: candidate.englishName,
+    displayNameSource: candidate.displayNameSource,
     latitude: Number(candidate.latitude.toFixed(6)),
     longitude: Number(candidate.longitude.toFixed(6)),
     address: candidate.address ?? undefined,
     categories: candidate.categories.slice(0, 3),
-    tags: [...new Set([...candidate.tags, ...(candidate.enrichment?.searchTags ?? [])])].slice(0, 5),
+    tags: [...new Set([...candidate.tags, ...(candidate.enrichment?.searchTags ?? [])])].slice(
+      0,
+      5
+    ),
     openingHours: [],
     openingHoursStatus: candidate.openingHoursStatus,
     openingHoursKnown: candidate.openingHoursKnown,

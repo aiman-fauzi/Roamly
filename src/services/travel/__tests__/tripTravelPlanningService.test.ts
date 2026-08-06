@@ -2,8 +2,14 @@ import { TripStatus } from '@prisma/client'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { GenerateItineraryRequest, GenerateItineraryResponse } from '@/ai/types'
-import type { DestinationRetrievalResult, RankedDestinationCandidate } from '@/services/destinations/types'
-import { MockFlightOfferProvider, MockHotelOfferProvider } from '@/services/travel/offers/mockProviders'
+import type {
+  DestinationRetrievalResult,
+  RankedDestinationCandidate,
+} from '@/services/destinations/types'
+import {
+  MockFlightOfferProvider,
+  MockHotelOfferProvider,
+} from '@/services/travel/offers/mockProviders'
 import { TravelOfferService } from '@/services/travel/offers/travelOfferService'
 import { TripTravelPlanningService } from '@/services/travel/planning/tripTravelPlanningService'
 import type { TravelPlanningError } from '@/services/travel/planning/tripTravelPlanningService'
@@ -108,7 +114,10 @@ const travelProfile = {
   updatedAt: new Date('2026-08-05T00:00:00.000Z'),
 }
 
-function itinerary(request: GenerateItineraryRequest, overrides: Partial<Itinerary> = {}): GenerateItineraryResponse {
+function itinerary(
+  request: GenerateItineraryRequest,
+  overrides: Partial<Itinerary> = {}
+): GenerateItineraryResponse {
   return {
     title: 'Kuala Lumpur with Travel Offers',
     summary: 'A grounded plan with selected mock offers.',
@@ -173,12 +182,16 @@ function itinerary(request: GenerateItineraryRequest, overrides: Partial<Itinera
         notes: [],
       },
     ],
-    roadmap: [{ dayNumber: 1, items: [{ label: 'Central Market', kind: 'activity', time: '09:00' }] }],
+    roadmap: [
+      { dayNumber: 1, items: [{ label: 'Central Market', kind: 'activity', time: '09:00' }] },
+    ],
     ...overrides,
   }
 }
 
-function createService(overrides: Partial<ConstructorParameters<typeof TripTravelPlanningService>[0]> = {}) {
+function createService(
+  overrides: Partial<ConstructorParameters<typeof TripTravelPlanningService>[0]> = {}
+) {
   const now = new Date('2026-08-05T00:00:00.000Z')
   const generateItinerary = vi.fn(async (request: GenerateItineraryRequest) => itinerary(request))
   const persistTrip = vi.fn().mockResolvedValue({
@@ -253,18 +266,36 @@ describe('TripTravelPlanningService', () => {
       },
     })
 
-    expect(result.flightSearch.offers).toHaveLength(2)
-    expect(result.hotelSearch.offers).toHaveLength(2)
+    expect(result.flightSearch.offers).toHaveLength(9)
+    expect(result.hotelSearch.offers).toHaveLength(4)
+    expect(result.selectedFlightOffer.mockFlightPair).toMatchObject({
+      outboundFlightId: expect.stringContaining('outbound'),
+      returnFlightId: expect.stringContaining('return'),
+    })
+    expect(result.selectedHotelOffer.mockHotel).toMatchObject({
+      area: expect.any(String),
+      nights: 2,
+    })
+    expect(result.itineraryTravelContext).toMatchObject({
+      dataStatus: 'mock',
+      budget: expect.objectContaining({
+        currency: 'MYR',
+        attractions: expect.objectContaining({ status: 'mock_estimate' }),
+      }),
+      planningPreview: expect.objectContaining({
+        status: 'planning_preview',
+      }),
+    })
     expect(result.summary).toMatchObject({
-      flightOffersReturned: 2,
-      hotelOffersReturned: 2,
+      flightOffersReturned: 9,
+      hotelOffersReturned: 4,
       selectedFlightOfferId: result.selectedFlightOffer.id,
       selectedHotelOfferId: result.selectedHotelOffer.id,
       flightSelectionSource: 'SYSTEM_RECOMMENDED',
       hotelSelectionSource: 'SYSTEM_RECOMMENDED',
       knownAttractionCost: { amount: '20.00', currency: 'MYR' },
-      wholeTripTotal: { amount: '2002.00', currency: 'MYR' },
-      perPersonTotal: { amount: '1001.00', currency: 'MYR' },
+      wholeTripTotal: { amount: '2134.00', currency: 'MYR' },
+      perPersonTotal: { amount: '1067.00', currency: 'MYR' },
       candidatesSentToGemini: 1,
       validItineraryItems: 1,
       validationStatus: 'PASSED',
@@ -281,12 +312,14 @@ describe('TripTravelPlanningService', () => {
         }),
         budgetSummary: expect.objectContaining({
           total: expect.objectContaining({
-            amount: { amount: '2002.00', currency: 'MYR' },
+            amount: { amount: '2134.00', currency: 'MYR' },
           }),
         }),
       })
     )
-    expect(JSON.stringify(generateItinerary.mock.calls[0][0].travelOffersContext)).not.toContain('providerOfferId')
+    expect(JSON.stringify(generateItinerary.mock.calls[0][0].travelOffersContext)).not.toContain(
+      'providerOfferId'
+    )
     expect(persistTrip).toHaveBeenCalledTimes(1)
   })
 
@@ -321,8 +354,73 @@ describe('TripTravelPlanningService', () => {
     expect(persistTrip).not.toHaveBeenCalled()
   })
 
+  it('rejects unknown selected hotel IDs before calling Gemini', async () => {
+    const { service, persistTrip, generateItinerary } = createService()
+
+    await expect(
+      service.plan({
+        tripId: 'trip-1',
+        userId: 'user-1',
+        input: {
+          originAirportCode: 'KUL',
+          departureDate: '2026-09-01',
+          adults: 2,
+          rooms: 1,
+          currency: 'MYR',
+          cabinClass: 'ECONOMY',
+          selectedHotelOfferId: 'missing-hotel-offer',
+          persist: true,
+        },
+      })
+    ).rejects.toMatchObject({
+      code: 'UNKNOWN_HOTEL_OFFER_ID',
+      status: 422,
+      details: expect.objectContaining({
+        recoverable: true,
+        category: 'INVALID_SELECTION',
+      }),
+    } satisfies Partial<TravelPlanningError>)
+
+    expect(generateItinerary).not.toHaveBeenCalled()
+    expect(persistTrip).not.toHaveBeenCalled()
+  })
+
+  it('rejects hotel searches when room capacity cannot support travellers', async () => {
+    const { service, persistTrip, generateItinerary } = createService()
+
+    await expect(
+      service.plan({
+        tripId: 'trip-1',
+        userId: 'user-1',
+        input: {
+          originAirportCode: 'KUL',
+          departureDate: '2026-09-01',
+          adults: 5,
+          rooms: 1,
+          currency: 'MYR',
+          cabinClass: 'ECONOMY',
+          persist: true,
+        },
+      })
+    ).rejects.toMatchObject({
+      code: 'HOTEL_OFFERS_UNAVAILABLE',
+      status: 404,
+      details: expect.objectContaining({
+        recoverable: true,
+        category: 'NO_RESULTS',
+      }),
+    } satisfies Partial<TravelPlanningError>)
+
+    expect(generateItinerary).not.toHaveBeenCalled()
+    expect(persistTrip).not.toHaveBeenCalled()
+  })
+
   it('categorizes provider rate limits and preserves previous itinerary state', async () => {
-    const existingTrip = { ...trip, itineraryJson: { title: 'Existing plan' }, status: TripStatus.COMPLETE }
+    const existingTrip = {
+      ...trip,
+      itineraryJson: { title: 'Existing plan' },
+      status: TripStatus.COMPLETE,
+    }
     const { service, persistTrip, generateItinerary } = createService({
       getTrip: vi.fn().mockResolvedValue(existingTrip),
     })
@@ -356,7 +454,11 @@ describe('TripTravelPlanningService', () => {
   })
 
   it('rejects unsupported offer IDs returned by Gemini before persistence', async () => {
-    const existingTrip = { ...trip, itineraryJson: { title: 'Existing plan' }, status: TripStatus.COMPLETE }
+    const existingTrip = {
+      ...trip,
+      itineraryJson: { title: 'Existing plan' },
+      status: TripStatus.COMPLETE,
+    }
     const generateItinerary = vi.fn(async (request: GenerateItineraryRequest) =>
       itinerary(request, { selectedFlightOfferId: 'flight-offer-from-nowhere' })
     )

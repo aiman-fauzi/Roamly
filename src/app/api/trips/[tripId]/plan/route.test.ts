@@ -13,6 +13,7 @@ import { ensureUser } from '@/services/userService'
 
 const routeMocks = vi.hoisted(() => ({
   plan: vi.fn(),
+  previewBudget: vi.fn(),
   upsertTravelProfile: vi.fn(),
 }))
 
@@ -39,7 +40,10 @@ vi.mock('@/services/travel/planning/tripTravelPlanningService', () => {
 
   return {
     TravelPlanningError: MockTravelPlanningError,
-    TripTravelPlanningService: vi.fn(() => ({ plan: routeMocks.plan })),
+    TripTravelPlanningService: vi.fn(() => ({
+      plan: routeMocks.plan,
+      previewBudget: routeMocks.previewBudget,
+    })),
   }
 })
 
@@ -100,6 +104,22 @@ describe('trip travel planning route', () => {
         candidatesSentToGemini: 1,
         candidatesOmitted: 0,
         persisted: true,
+      },
+    })
+    routeMocks.previewBudget.mockResolvedValue({
+      trip: { id: 'trip-1' },
+      itineraryTravelContext: { dataStatus: 'mock' },
+      planningPreview: { status: 'planning_preview' },
+      budgetSummary: { total: { amount: { amount: '100.00', currency: 'MYR' } } },
+      selectedFlightOffer: { id: 'flight-1' },
+      selectedHotelOffer: { id: 'hotel-1' },
+      flightSearch: { status: 'SUCCESS', offers: [] },
+      hotelSearch: { status: 'SUCCESS', offers: [] },
+      summary: {
+        eligibleCandidates: 1,
+        candidatesSentToGemini: 1,
+        candidatesOmitted: 0,
+        persisted: false,
       },
     })
   })
@@ -180,5 +200,37 @@ describe('trip travel planning route', () => {
     })
     expect(JSON.stringify(body)).not.toContain('rawText')
     expect(JSON.stringify(body)).not.toContain('providerOfferId')
+  })
+
+  it('returns a planning preview when Gemini quota fails', async () => {
+    routeMocks.plan.mockRejectedValue(
+      new TravelPlanningError('AI_QUOTA_EXCEEDED', 'Gemini quota exceeded.', 429, {
+        recoverable: true,
+        category: 'AI_QUOTA_EXCEEDED',
+        previousItineraryPreserved: false,
+      })
+    )
+
+    const response = await POST(request(validBody), {
+      params: Promise.resolve({ tripId: 'trip-1' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(routeMocks.previewBudget).toHaveBeenCalledWith({
+      tripId: 'trip-1',
+      userId: 'user-1',
+      input: expect.objectContaining({
+        originAirportCode: 'KUL',
+        persist: false,
+      }),
+    })
+    expect(body.itinerary).toBeNull()
+    expect(body.itineraryStatus).toMatchObject({
+      status: 'planning_preview_due_to_ai_failure',
+      code: 'AI_QUOTA_EXCEEDED',
+    })
+    expect(body.itineraryTravelContext).toEqual({ dataStatus: 'mock' })
+    expect(JSON.stringify(body)).not.toContain('providerDiagnostics')
   })
 })

@@ -34,6 +34,7 @@ import { getPreferenceSet } from '@/services/preferenceService'
 import { getProfileSummary } from '@/services/profileService'
 import { TripBudgetService, type TripBudgetInput } from '@/services/travel/budget/tripBudgetService'
 import type { BudgetCategoryStatus, TripBudgetSummary } from '@/services/travel/budget/types'
+import { resolveTravelCurrency } from '@/services/travel/currencyPolicy'
 import { money } from '@/services/travel/offers/money'
 import {
   rankFlightOffers,
@@ -56,6 +57,10 @@ import type {
 } from '@/services/travel/offers/types'
 import { TripBudgetSnapshotService } from '@/services/travel/persistence/tripBudgetSnapshotService'
 import type { TripBudgetSnapshotResponse } from '@/services/travel/persistence/tripBudgetSnapshotService'
+import {
+  buildItineraryTravelContext,
+  type ItineraryTravelContext,
+} from '@/services/travel/planning/liveTravelContext'
 import { dateToDateOnly } from '@/services/travel/profile/tripTravelProfileService'
 import { getTripById, TripStatus, updateTripStatus } from '@/services/tripService'
 import type { PreferenceSet, Trip } from '@/types/trip'
@@ -66,8 +71,14 @@ type TravelPlanningErrorCategory =
   | TravelOfferResultStatus
   | 'AI_TIMEOUT'
   | 'AI_RATE_LIMITED'
+  | 'AI_QUOTA_EXCEEDED'
   | 'AI_TEMPORARY_FAILURE'
+  | 'AI_NETWORK_FAILURE'
+  | 'AI_MODEL_UNAVAILABLE'
   | 'AI_INVALID_RESPONSE'
+  | 'AI_SCHEMA_VALIDATION_FAILURE'
+  | 'AI_UNSUPPORTED_CANDIDATE'
+  | 'AI_AUTHENTICATION_FAILURE'
   | 'AI_AUTHENTICATION_FAILED'
   | 'AI_UNKNOWN_FAILURE'
   | 'AI_CONTRACT_VIOLATION'
@@ -94,8 +105,14 @@ interface ProfileForPlanning {
 }
 
 interface TravelOfferSearchService {
-  searchFlights(request: FlightSearchRequest, options?: { refresh?: boolean }): Promise<FlightSearchResult>
-  searchHotels(request: HotelSearchRequest, options?: { refresh?: boolean }): Promise<HotelSearchResult>
+  searchFlights(
+    request: FlightSearchRequest,
+    options?: { refresh?: boolean }
+  ): Promise<FlightSearchResult>
+  searchHotels(
+    request: HotelSearchRequest,
+    options?: { refresh?: boolean }
+  ): Promise<HotelSearchResult>
 }
 
 interface TripTravelPlanningDependencies {
@@ -220,10 +237,12 @@ export interface TripTravelPlanningPreviewResult {
   selectedFlightOffer: RankedFlightOffer
   selectedHotelOffer: RankedHotelOffer
   budgetSummary: TripBudgetSummary
+  itineraryTravelContext: ItineraryTravelContext
   budgetSnapshot?: TripBudgetSnapshotResponse
   destinationCity: DestinationCityResolution
   destinationRetrieval: DestinationRetrievalResult
   destinationContext: GeminiDestinationContext
+  planningPreview: ItineraryTravelContext['planningPreview']
   travelOffersContext: TravelOffersGeminiContext
   summary: TripTravelPlanningSummary
 }
@@ -254,6 +273,7 @@ const DESTINATION_AIRPORTS: Record<string, string> = {
   'united-states:los-angeles': 'LAX',
   'united-states:new-york': 'JFK',
   'united-states:san-francisco': 'SFO',
+  'vietnam:phu-quoc': 'PQC',
 }
 
 export class TravelPlanningError extends Error {
@@ -292,12 +312,14 @@ function recoverableDetails(input: {
   previousItineraryPreserved: boolean
   retryAfterMs?: number
   details?: unknown
+  providerDiagnostics?: GeminiProviderError['diagnostics']
 }) {
   return {
     recoverable: true,
     category: input.category,
     previousItineraryPreserved: input.previousItineraryPreserved,
     retryAfterMs: input.retryAfterMs,
+    providerDiagnostics: input.providerDiagnostics,
     details: input.details,
   }
 }
@@ -311,9 +333,24 @@ function offerStatusCode(status: TravelOfferResultStatus): number {
 }
 
 function aiErrorStatus(error: GeminiProviderError): number {
-  if (error.code === 'AI_RATE_LIMITED') return 429
-  if (error.code === 'AI_TIMEOUT' || error.code === 'AI_TEMPORARY_FAILURE') return 503
-  if (error.code === 'AI_INVALID_RESPONSE') return 502
+  if (error.code === 'AI_RATE_LIMITED' || error.code === 'AI_QUOTA_EXCEEDED') return 429
+  if (
+    error.code === 'AI_TIMEOUT' ||
+    error.code === 'AI_TEMPORARY_FAILURE' ||
+    error.code === 'AI_NETWORK_FAILURE' ||
+    error.code === 'AI_MODEL_UNAVAILABLE'
+  ) {
+    return 503
+  }
+  if (error.code === 'AI_AUTHENTICATION_FAILURE' || error.code === 'AI_AUTHENTICATION_FAILED')
+    return 401
+  if (
+    error.code === 'AI_INVALID_RESPONSE' ||
+    error.code === 'AI_SCHEMA_VALIDATION_FAILURE' ||
+    error.code === 'AI_UNSUPPORTED_CANDIDATE'
+  ) {
+    return 502
+  }
   return 502
 }
 
@@ -385,9 +422,13 @@ function usableFlightSelection(
   if (!selection || selection.status !== 'SELECTED') return null
   if (selection.providerExpiresAt && selection.providerExpiresAt <= now) return null
   if (selection.searchFingerprint !== result.requestFingerprint) return null
-  return rankedOffers.find(
-    (offer) => offer.provider === selection.providerKey && offer.providerOfferId === selection.providerOfferId
-  ) ?? null
+  return (
+    rankedOffers.find(
+      (offer) =>
+        offer.provider === selection.providerKey &&
+        offer.providerOfferId === selection.providerOfferId
+    ) ?? null
+  )
 }
 
 function usableHotelSelection(
@@ -399,12 +440,16 @@ function usableHotelSelection(
   if (!selection || selection.status !== 'SELECTED') return null
   if (selection.providerExpiresAt && selection.providerExpiresAt <= now) return null
   if (selection.searchFingerprint !== result.requestFingerprint) return null
-  return rankedOffers.find(
-    (offer) => offer.provider === selection.providerKey && offer.id === selection.providerOfferId
-  ) ?? null
+  return (
+    rankedOffers.find(
+      (offer) => offer.provider === selection.providerKey && offer.id === selection.providerOfferId
+    ) ?? null
+  )
 }
 
-function candidateTypeCounts(context: GeminiDestinationContext): Record<DestinationEntityType, number> {
+function candidateTypeCounts(
+  context: GeminiDestinationContext
+): Record<DestinationEntityType, number> {
   return context.candidates.reduce<Record<DestinationEntityType, number>>(
     (counts, candidate) => {
       counts[candidate.type] += 1
@@ -421,9 +466,9 @@ function countItineraryItems(itinerary: GenerateItineraryResponse): number {
   )
 }
 
-function compactCandidateCenter(candidates: GeminiDestinationContext['candidates']):
-  | { latitude: number; longitude: number }
-  | undefined {
+function compactCandidateCenter(
+  candidates: GeminiDestinationContext['candidates']
+): { latitude: number; longitude: number } | undefined {
   if (candidates.length === 0) return undefined
   const total = candidates.reduce(
     (sum, candidate) => ({
@@ -446,7 +491,10 @@ function selectedDestinationCandidates(
   return retrieval.candidates.filter((candidate) => selectedIds.has(candidate.candidateId))
 }
 
-function categoryNamesByStatus(summary: TripBudgetSummary, statuses: BudgetCategoryStatus[]): string[] {
+function categoryNamesByStatus(
+  summary: TripBudgetSummary,
+  statuses: BudgetCategoryStatus[]
+): string[] {
   const entries = [
     ['flight', summary.flight.status],
     ['accommodation', summary.accommodation.status],
@@ -472,7 +520,10 @@ function flightOfferSummary(offer: RankedFlightOffer): string {
   return `${route}, ${stopLabel}, ${itinerary?.durationMinutes ?? 0} minutes, ${offer.totalPrice.amount} ${offer.totalPrice.currency}, ${refundLabel}`
 }
 
-function uniqueRankedFlights(selected: RankedFlightOffer, ranked: RankedFlightOffer[]): RankedFlightOffer[] {
+function uniqueRankedFlights(
+  selected: RankedFlightOffer,
+  ranked: RankedFlightOffer[]
+): RankedFlightOffer[] {
   const seen = new Set<string>()
   return [selected, ...ranked].filter((offer) => {
     if (seen.has(offer.id)) return false
@@ -481,7 +532,10 @@ function uniqueRankedFlights(selected: RankedFlightOffer, ranked: RankedFlightOf
   })
 }
 
-function uniqueRankedHotels(selected: RankedHotelOffer, ranked: RankedHotelOffer[]): RankedHotelOffer[] {
+function uniqueRankedHotels(
+  selected: RankedHotelOffer,
+  ranked: RankedHotelOffer[]
+): RankedHotelOffer[] {
   const seen = new Set<string>()
   return [selected, ...ranked].filter((offer) => {
     if (seen.has(offer.id)) return false
@@ -534,7 +588,9 @@ function validateItineraryOfferContract(
       context.selectedFlightOfferId &&
       itinerary.selectedFlightOfferId !== context.selectedFlightOfferId
     ) {
-      issues.push(`Itinerary selected flight offer ${itinerary.selectedFlightOfferId} does not match the ranked selection`)
+      issues.push(
+        `Itinerary selected flight offer ${itinerary.selectedFlightOfferId} does not match the ranked selection`
+      )
     }
   }
 
@@ -545,7 +601,9 @@ function validateItineraryOfferContract(
       context.selectedHotelOfferId &&
       itinerary.selectedHotelOfferId !== context.selectedHotelOfferId
     ) {
-      issues.push(`Itinerary selected hotel offer ${itinerary.selectedHotelOfferId} does not match the ranked selection`)
+      issues.push(
+        `Itinerary selected hotel offer ${itinerary.selectedHotelOfferId} does not match the ranked selection`
+      )
     }
   }
 
@@ -624,7 +682,9 @@ export class TripTravelPlanningService {
     }
   }
 
-  async previewBudget(options: TripTravelPlanningOptions): Promise<TripTravelPlanningPreviewResult> {
+  async previewBudget(
+    options: TripTravelPlanningOptions
+  ): Promise<TripTravelPlanningPreviewResult> {
     return this.prepare(options, 'preview')
   }
 
@@ -679,6 +739,7 @@ export class TripTravelPlanningService {
               category: error.code,
               previousItineraryPreserved: previousItineraryPreserved(prepared.trip),
               retryAfterMs: error.retryAfterMs,
+              providerDiagnostics: error.diagnostics,
               details: {
                 ...prepared.summary,
                 validationStatus: 'FAILED',
@@ -703,11 +764,16 @@ export class TripTravelPlanningService {
         }
       }
 
-      const offerValidationIssues = validateItineraryOfferContract(itinerary, prepared.travelOffersContext)
+      const offerValidationIssues = validateItineraryOfferContract(
+        itinerary,
+        prepared.travelOffersContext
+      )
       const validationIssues = [...destinationValidationIssues, ...offerValidationIssues]
       if (validationIssues.length > 0) {
         throw new TravelPlanningError(
-          offerValidationIssues.length > 0 ? 'AI_TRAVEL_OFFER_CONTRACT_VIOLATION' : 'AI_CONTRACT_VIOLATION',
+          offerValidationIssues.length > 0
+            ? 'AI_TRAVEL_OFFER_CONTRACT_VIOLATION'
+            : 'AI_CONTRACT_VIOLATION',
           offerValidationIssues.length > 0
             ? 'Generated itinerary referenced unsupported travel offers.'
             : 'Generated itinerary referenced unsupported destination records.',
@@ -727,10 +793,15 @@ export class TripTravelPlanningService {
         )
       }
 
-      const validatedItinerary = attachSelectedOfferIds(
-        attachCandidateMetadataToItinerary(itinerary, prepared.destinationContext),
-        prepared.travelOffersContext
-      )
+      const validatedItinerary = {
+        ...attachSelectedOfferIds(
+          attachCandidateMetadataToItinerary(itinerary, prepared.destinationContext),
+          prepared.travelOffersContext
+        ),
+        itineraryTravelContext: prepared.itineraryTravelContext,
+        planningPreview: prepared.planningPreview,
+        budgetSummary: prepared.budgetSummary,
+      }
       let resultTrip: Trip = prepared.trip
       const summary: TripTravelPlanningSummary = {
         ...prepared.summary,
@@ -740,7 +811,11 @@ export class TripTravelPlanningService {
       }
 
       if (options.input.persist) {
-        resultTrip = await this.dependencies.persistTrip(prepared.trip.id, TripStatus.COMPLETE, validatedItinerary)
+        resultTrip = await this.dependencies.persistTrip(
+          prepared.trip.id,
+          TripStatus.COMPLETE,
+          validatedItinerary
+        )
         summary.persisted = true
       }
 
@@ -772,7 +847,7 @@ export class TripTravelPlanningService {
 
     const preferences = requirePreferenceFields(preferenceSet)
     const profile = await this.dependencies.getProfile(trip.userId)
-    if (!profile.profileComplete || !profile.preferredCurrency) {
+    if (!profile.profileComplete) {
       throw new TravelPlanningError(
         'PROFILE_INCOMPLETE',
         'Please complete your profile before travel planning.',
@@ -801,7 +876,10 @@ export class TripTravelPlanningService {
     )
 
     const originAirportCode = requirePlanningField(
-      planningInputValue(options.input.originAirportCode, persistedTravelProfile?.originAirportCode),
+      planningInputValue(
+        options.input.originAirportCode,
+        persistedTravelProfile?.originAirportCode
+      ),
       'originAirportCode',
       trip
     )
@@ -810,14 +888,22 @@ export class TripTravelPlanningService {
       'departureDate',
       trip
     )
-    const currency = requirePlanningField(
-      planningInputValue(options.input.currency, persistedTravelProfile?.currency, profile.preferredCurrency),
-      'currency',
-      trip
-    )
-    const adults = planningInputValue(options.input.adults, persistedTravelProfile?.adults, preferences.groupSize) ?? 1
-    const children = planningInputValue(options.input.children, persistedTravelProfile?.children, 0) ?? 0
-    const infants = planningInputValue(options.input.infants, persistedTravelProfile?.infants, 0) ?? 0
+    const currency = resolveTravelCurrency({
+      tripCurrency: planningInputValue(options.input.currency, persistedTravelProfile?.currency),
+      userPreferredCurrency: profile.preferredCurrency,
+      originAirportCode,
+      originCountry: options.input.originCountry ?? persistedTravelProfile?.originCountry,
+    }).currency
+    const adults =
+      planningInputValue(
+        options.input.adults,
+        persistedTravelProfile?.adults,
+        preferences.groupSize
+      ) ?? 1
+    const children =
+      planningInputValue(options.input.children, persistedTravelProfile?.children, 0) ?? 0
+    const infants =
+      planningInputValue(options.input.infants, persistedTravelProfile?.infants, 0) ?? 0
     const travelerCount = Math.max(1, adults + children + infants)
     const rooms =
       planningInputValue(options.input.rooms, persistedTravelProfile?.rooms) ??
@@ -835,9 +921,13 @@ export class TripTravelPlanningService {
     const cabinClass = options.input.cabinClass ?? persistedTravelProfile?.cabinClass ?? 'ECONOMY'
     const nonStopOnly = options.input.nonStopOnly ?? persistedTravelProfile?.nonStopOnly ?? false
     const flightSelectionStrategy =
-      options.input.flightSelectionStrategy ?? persistedTravelProfile?.flightSelectionStrategy ?? 'BEST_VALUE'
+      options.input.flightSelectionStrategy ??
+      persistedTravelProfile?.flightSelectionStrategy ??
+      'BEST_VALUE'
     const hotelSelectionStrategy =
-      options.input.hotelSelectionStrategy ?? persistedTravelProfile?.hotelSelectionStrategy ?? 'BEST_VALUE'
+      options.input.hotelSelectionStrategy ??
+      persistedTravelProfile?.hotelSelectionStrategy ??
+      'BEST_VALUE'
     const destinationCurrency =
       destinationCity.currencyCode ?? inferDestinationCurrency(preferences.destination, currency)
     const exchangeRate = await this.dependencies.resolveExchangeRate({
@@ -908,7 +998,11 @@ export class TripTravelPlanningService {
     this.assertOfferSearchSucceeded('hotel', hotelSearch, trip)
 
     const rankedFlightOffers = rankFlightOffers(flightSearch.offers, flightSelectionStrategy)
-    const rankedHotelOffers = rankHotelOffers(hotelSearch.offers, hotelSelectionStrategy, itineraryCenter)
+    const rankedHotelOffers = rankHotelOffers(
+      hotelSearch.offers,
+      hotelSelectionStrategy,
+      itineraryCenter
+    )
     const [currentFlightSelection, currentHotelSelection] = await Promise.all([
       this.dependencies.getCurrentFlightSelection(options.tripId),
       this.dependencies.getCurrentHotelSelection(options.tripId),
@@ -919,9 +1013,17 @@ export class TripTravelPlanningService {
       rankedFlightOffers,
       new Date()
     )
-    const requestedFlightOfferId = options.input.selectedFlightOfferId ?? selectedPersistedFlightOffer?.id
-    const selectedFlightOffer = selectFlightOffer(rankedFlightOffers, flightSelectionStrategy, requestedFlightOfferId)
-    const flightSelectionSource = selectedPersistedFlightOffer?.id === selectedFlightOffer?.id ? 'USER_SELECTED' : 'SYSTEM_RECOMMENDED'
+    const requestedFlightOfferId =
+      options.input.selectedFlightOfferId ?? selectedPersistedFlightOffer?.id
+    const selectedFlightOffer = selectFlightOffer(
+      rankedFlightOffers,
+      flightSelectionStrategy,
+      requestedFlightOfferId
+    )
+    const flightSelectionSource =
+      selectedPersistedFlightOffer?.id === selectedFlightOffer?.id
+        ? 'USER_SELECTED'
+        : 'SYSTEM_RECOMMENDED'
     if (!selectedFlightOffer) {
       throw new TravelPlanningError(
         'UNKNOWN_FLIGHT_OFFER_ID',
@@ -941,14 +1043,18 @@ export class TripTravelPlanningService {
       rankedHotelOffers,
       new Date()
     )
-    const requestedHotelOfferId = options.input.selectedHotelOfferId ?? selectedPersistedHotelOffer?.id
+    const requestedHotelOfferId =
+      options.input.selectedHotelOfferId ?? selectedPersistedHotelOffer?.id
     const selectedHotelOffer = selectHotelOffer(
       rankedHotelOffers,
       hotelSelectionStrategy,
       requestedHotelOfferId,
       itineraryCenter
     )
-    const hotelSelectionSource = selectedPersistedHotelOffer?.id === selectedHotelOffer?.id ? 'USER_SELECTED' : 'SYSTEM_RECOMMENDED'
+    const hotelSelectionSource =
+      selectedPersistedHotelOffer?.id === selectedHotelOffer?.id
+        ? 'USER_SELECTED'
+        : 'SYSTEM_RECOMMENDED'
     if (!selectedHotelOffer) {
       throw new TravelPlanningError(
         'UNKNOWN_HOTEL_OFFER_ID',
@@ -963,22 +1069,57 @@ export class TripTravelPlanningService {
       )
     }
 
+    const selectedCandidates = selectedDestinationCandidates(
+      destinationRetrieval,
+      destinationContext
+    )
     const budgetSummary = await this.dependencies.calculateBudget({
       currency,
       destinationCurrency,
       travelerCount,
       durationDays: preferences.durationDays,
-      userBudget: money(preferences.budget, profile.preferredCurrency),
+      userBudget: money(preferences.budget, currency),
       selectedFlightOffer,
       selectedHotelOffer,
-      destinationCandidates: selectedDestinationCandidates(destinationRetrieval, destinationContext),
+      destinationCandidates: selectedCandidates,
     })
-    const budgetSnapshot = await this.dependencies.persistBudgetSnapshot({
-      tripId: trip.id,
-      budgetSummary,
-      selectedFlightSnapshotId: flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : null,
-      selectedHotelSnapshotId: hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : null,
-    })
+    let itineraryTravelContext: ItineraryTravelContext
+    try {
+      itineraryTravelContext = buildItineraryTravelContext({
+        selectedFlightOffer,
+        selectedHotelOffer,
+        budgetSummary,
+        departureDate,
+        returnDate,
+        originAirportCode,
+        destinationAirportCode,
+        travellerCount: travelerCount,
+        roomCount: rooms,
+        destinationCandidates: selectedCandidates,
+      })
+    } catch (error) {
+      throw new TravelPlanningError(
+        'TRUSTED_TRAVEL_CONTEXT_UNAVAILABLE',
+        'Selected mock travel options could not be used for itinerary planning.',
+        422,
+        recoverableDetails({
+          category: 'INVALID_SELECTION',
+          previousItineraryPreserved: previousItineraryPreserved(trip),
+          details: { reason: error instanceof Error ? error.message : 'Unknown context error' },
+        })
+      )
+    }
+    const budgetSnapshot =
+      mode === 'persist'
+        ? await this.dependencies.persistBudgetSnapshot({
+            tripId: trip.id,
+            budgetSummary,
+            selectedFlightSnapshotId:
+              flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : null,
+            selectedHotelSnapshotId:
+              hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : null,
+          })
+        : undefined
     const travelOffersContext = buildTravelOffersContext(
       selectedFlightOffer,
       selectedHotelOffer,
@@ -1001,8 +1142,10 @@ export class TripTravelPlanningService {
       budgetSummary,
       flightSelectionSource,
       hotelSelectionSource,
-      selectedFlightSnapshotId: flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : undefined,
-      selectedHotelSnapshotId: hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : undefined,
+      selectedFlightSnapshotId:
+        flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : undefined,
+      selectedHotelSnapshotId:
+        hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : undefined,
     })
 
     return {
@@ -1014,8 +1157,10 @@ export class TripTravelPlanningService {
       exchangeRate,
       flightRequest,
       hotelRequest,
-      selectedFlightSnapshotId: flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : undefined,
-      selectedHotelSnapshotId: hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : undefined,
+      selectedFlightSnapshotId:
+        flightSelectionSource === 'USER_SELECTED' ? currentFlightSelection?.id : undefined,
+      selectedHotelSnapshotId:
+        hotelSelectionSource === 'USER_SELECTED' ? currentHotelSelection?.id : undefined,
       flightSelectionSource,
       hotelSelectionSource,
       flightSearch,
@@ -1025,10 +1170,12 @@ export class TripTravelPlanningService {
       selectedFlightOffer,
       selectedHotelOffer,
       budgetSummary,
+      itineraryTravelContext,
       budgetSnapshot,
       destinationCity,
       destinationRetrieval,
       destinationContext,
+      planningPreview: itineraryTravelContext.planningPreview,
       travelOffersContext,
       summary,
     }

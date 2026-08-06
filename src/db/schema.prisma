@@ -163,12 +163,12 @@ model Trip {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  preferenceSet PreferenceSet?
-  travelProfile TripTravelProfile?
+  user             User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferenceSet    PreferenceSet?
+  travelProfile    TripTravelProfile?
   flightSelections TripFlightSelection[]
-  hotelSelections TripHotelSelection[]
-  budgetSnapshots TripBudgetSnapshot[]
+  hotelSelections  TripHotelSelection[]
+  budgetSnapshots  TripBudgetSnapshot[]
 
   @@map("trips")
 }
@@ -195,23 +195,31 @@ model PreferenceSet {
 }
 
 model TripTravelProfile {
-  id                       String                  @id @default(uuid())
-  tripId                   String                  @unique
-  originCity               String?                 @db.VarChar(160)
-  originCountry            String?                 @db.VarChar(120)
-  originAirportCode        String?                 @db.VarChar(3)
-  destinationAirportCode   String?                 @db.VarChar(3)
-  departureDate            DateTime?               @db.Date
-  returnDate               DateTime?               @db.Date
-  adults                   Int                     @default(1)
-  children                 Int                     @default(0)
-  infants                  Int                     @default(0)
-  rooms                    Int                     @default(1)
-  cabinClass               TravelCabinClass        @default(ECONOMY)
-  nonStopOnly              Boolean                 @default(false)
-  currency                 String?                 @db.VarChar(3)
-  flightSelectionStrategy  FlightSelectionStrategy @default(BEST_VALUE)
-  hotelSelectionStrategy   HotelSelectionStrategy  @default(BEST_VALUE)
+  id                          String                  @id @default(uuid())
+  tripId                      String                  @unique
+  originCity                  String?                 @db.VarChar(160)
+  originCountry               String?                 @db.VarChar(120)
+  originAirportCode           String?                 @db.VarChar(3)
+  destinationAirportCode      String?                 @db.VarChar(3)
+  departureDate               DateTime?               @db.Date
+  returnDate                  DateTime?               @db.Date
+  adults                      Int                     @default(1)
+  children                    Int                     @default(0)
+  infants                     Int                     @default(0)
+  rooms                       Int                     @default(1)
+  cabinClass                  TravelCabinClass        @default(ECONOMY)
+  nonStopOnly                 Boolean                 @default(false)
+  currency                    String?                 @db.VarChar(3)
+  flightSelectionStrategy     FlightSelectionStrategy @default(BEST_VALUE)
+  hotelSelectionStrategy      HotelSelectionStrategy  @default(BEST_VALUE)
+  selectedOutboundFlightId    String?                 @db.VarChar(220)
+  selectedReturnFlightId      String?                 @db.VarChar(220)
+  selectedHotelId             String?                 @db.VarChar(220)
+  selectionFingerprint        String?                 @db.VarChar(64)
+  selectionFingerprintVersion Int?
+  selectionProvider           String?                 @db.VarChar(40)
+  selectionReviewedAt         DateTime?
+  selectionVersion            Int                     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -224,30 +232,30 @@ model TripTravelProfile {
 }
 
 model TripFlightSelection {
-  id                     String                    @id @default(uuid())
+  id                     String                   @id @default(uuid())
   tripId                 String
-  offerId                String                    @db.VarChar(220)
-  providerKey            String                    @db.VarChar(80)
-  providerOfferId        String                    @db.VarChar(220)
-  searchFingerprint      String                    @db.VarChar(64)
-  originAirportCode      String                    @db.VarChar(3)
-  destinationAirportCode String                    @db.VarChar(3)
-  departureDate          DateTime                  @db.Date
-  returnDate             DateTime?                 @db.Date
+  offerId                String                   @db.VarChar(220)
+  providerKey            String                   @db.VarChar(80)
+  providerOfferId        String                   @db.VarChar(220)
+  searchFingerprint      String                   @db.VarChar(64)
+  originAirportCode      String                   @db.VarChar(3)
+  destinationAirportCode String                   @db.VarChar(3)
+  departureDate          DateTime                 @db.Date
+  returnDate             DateTime?                @db.Date
   itinerarySummary       Json
-  originalAmount         Decimal                   @db.Decimal(18, 2)
-  originalCurrency       String                    @db.VarChar(3)
-  convertedAmount        Decimal?                  @db.Decimal(18, 2)
-  convertedCurrency      String?                   @db.VarChar(3)
-  conversionRate         Decimal?                  @db.Decimal(18, 8)
+  originalAmount         Decimal                  @db.Decimal(18, 2)
+  originalCurrency       String                   @db.VarChar(3)
+  convertedAmount        Decimal?                 @db.Decimal(18, 2)
+  convertedCurrency      String?                  @db.VarChar(3)
+  conversionRate         Decimal?                 @db.Decimal(18, 8)
   conversionTimestamp    DateTime?
   baggageSummary         Json?
   refundable             Boolean?
   fetchedAt              DateTime
   providerExpiresAt      DateTime?
-  selectedAt             DateTime                  @default(now())
-  status                 TripOfferSelectionStatus  @default(SELECTED)
-  selectionSource        TripOfferSelectionSource  @default(USER_SELECTED)
+  selectedAt             DateTime                 @default(now())
+  status                 TripOfferSelectionStatus @default(SELECTED)
+  selectionSource        TripOfferSelectionSource @default(USER_SELECTED)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -262,31 +270,31 @@ model TripFlightSelection {
 }
 
 model TripHotelSelection {
-  id                    String                    @id @default(uuid())
-  tripId                String
-  offerId               String                    @db.VarChar(220)
-  providerKey           String                    @db.VarChar(80)
-  providerOfferId       String                    @db.VarChar(220)
-  searchFingerprint     String                    @db.VarChar(64)
-  propertyId            String                    @db.VarChar(220)
-  propertyName          String                    @db.VarChar(240)
-  coordinates           Json?
-  checkInDate           DateTime                  @db.Date
-  checkOutDate          DateTime                  @db.Date
-  roomSummary           Json?
-  boardType             String?                   @db.VarChar(80)
-  originalAmount        Decimal                   @db.Decimal(18, 2)
-  originalCurrency      String                    @db.VarChar(3)
-  convertedAmount       Decimal?                  @db.Decimal(18, 2)
-  convertedCurrency     String?                   @db.VarChar(3)
-  conversionRate        Decimal?                  @db.Decimal(18, 8)
-  conversionTimestamp   DateTime?
-  refundable            Boolean?
-  fetchedAt             DateTime
-  providerExpiresAt     DateTime?
-  selectedAt            DateTime                  @default(now())
-  status                TripOfferSelectionStatus  @default(SELECTED)
-  selectionSource       TripOfferSelectionSource  @default(USER_SELECTED)
+  id                  String                   @id @default(uuid())
+  tripId              String
+  offerId             String                   @db.VarChar(220)
+  providerKey         String                   @db.VarChar(80)
+  providerOfferId     String                   @db.VarChar(220)
+  searchFingerprint   String                   @db.VarChar(64)
+  propertyId          String                   @db.VarChar(220)
+  propertyName        String                   @db.VarChar(240)
+  coordinates         Json?
+  checkInDate         DateTime                 @db.Date
+  checkOutDate        DateTime                 @db.Date
+  roomSummary         Json?
+  boardType           String?                  @db.VarChar(80)
+  originalAmount      Decimal                  @db.Decimal(18, 2)
+  originalCurrency    String                   @db.VarChar(3)
+  convertedAmount     Decimal?                 @db.Decimal(18, 2)
+  convertedCurrency   String?                  @db.VarChar(3)
+  conversionRate      Decimal?                 @db.Decimal(18, 8)
+  conversionTimestamp DateTime?
+  refundable          Boolean?
+  fetchedAt           DateTime
+  providerExpiresAt   DateTime?
+  selectedAt          DateTime                 @default(now())
+  status              TripOfferSelectionStatus @default(SELECTED)
+  selectionSource     TripOfferSelectionSource @default(USER_SELECTED)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -322,9 +330,9 @@ model TripBudgetSnapshot {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  trip                    Trip                 @relation(fields: [tripId], references: [id], onDelete: Cascade)
-  selectedFlightSnapshot  TripFlightSelection? @relation("FlightSelectionBudgetSnapshots", fields: [selectedFlightSnapshotId], references: [id], onDelete: SetNull)
-  selectedHotelSnapshot   TripHotelSelection?  @relation("HotelSelectionBudgetSnapshots", fields: [selectedHotelSnapshotId], references: [id], onDelete: SetNull)
+  trip                   Trip                 @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  selectedFlightSnapshot TripFlightSelection? @relation("FlightSelectionBudgetSnapshots", fields: [selectedFlightSnapshotId], references: [id], onDelete: SetNull)
+  selectedHotelSnapshot  TripHotelSelection?  @relation("HotelSelectionBudgetSnapshots", fields: [selectedHotelSnapshotId], references: [id], onDelete: SetNull)
 
   @@index([tripId, status])
   @@index([selectedFlightSnapshotId])
@@ -554,29 +562,29 @@ model DestinationTag {
 }
 
 model DestinationImage {
-  id           String    @id @default(uuid())
-  countryId    String?
-  cityId       String?
-  attractionId String?
-  restaurantId String?
-  hotelId      String?
-  activityId   String?
-  url          String
-  altText      String?   @db.VarChar(255)
-  caption      String?   @db.VarChar(255)
-  attribution  String?   @db.VarChar(255)
-  sourceProvider String?  @db.VarChar(80)
-  sourceRecordId String?  @db.VarChar(255)
+  id             String    @id @default(uuid())
+  countryId      String?
+  cityId         String?
+  attractionId   String?
+  restaurantId   String?
+  hotelId        String?
+  activityId     String?
+  url            String
+  altText        String?   @db.VarChar(255)
+  caption        String?   @db.VarChar(255)
+  attribution    String?   @db.VarChar(255)
+  sourceProvider String?   @db.VarChar(80)
+  sourceRecordId String?   @db.VarChar(255)
   sourceUrl      String?
   pageUrl        String?
-  author         String?  @db.VarChar(255)
-  licenseName    String?  @db.VarChar(120)
+  author         String?   @db.VarChar(255)
+  licenseName    String?   @db.VarChar(120)
   licenseUrl     String?
-  sortOrder    Int       @default(0)
-  isPrimary    Boolean   @default(false)
-  deletedAt    DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  sortOrder      Int       @default(0)
+  isPrimary      Boolean   @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   country    Country?    @relation(fields: [countryId], references: [id], onDelete: Cascade)
   city       City?       @relation(fields: [cityId], references: [id], onDelete: Cascade)

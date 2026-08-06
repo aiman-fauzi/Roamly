@@ -16,6 +16,7 @@ import {
 import { resolveExchangeRate, type ExchangeRateResult } from '@/services/exchangeRateService'
 import { getPreferenceSet } from '@/services/preferenceService'
 import { getProfileSummary } from '@/services/profileService'
+import { resolveTravelCurrency } from '@/services/travel/currencyPolicy'
 import { convertMoney } from '@/services/travel/offers/money'
 import { createDefaultTravelOfferService } from '@/services/travel/offers/travelOfferService'
 import type {
@@ -45,8 +46,14 @@ interface LoadedTrip {
 }
 
 interface TravelOfferSearchService {
-  searchFlights(request: FlightSearchRequest, options?: { refresh?: boolean }): Promise<FlightSearchResult>
-  searchHotels(request: HotelSearchRequest, options?: { refresh?: boolean }): Promise<HotelSearchResult>
+  searchFlights(
+    request: FlightSearchRequest,
+    options?: { refresh?: boolean }
+  ): Promise<FlightSearchResult>
+  searchHotels(
+    request: HotelSearchRequest,
+    options?: { refresh?: boolean }
+  ): Promise<HotelSearchResult>
 }
 
 interface TripOfferSelectionDependencies {
@@ -56,7 +63,10 @@ interface TripOfferSelectionDependencies {
   getPreferredCurrency?: (userId: string) => Promise<string | null>
   resolveCity?: (destination: string) => Promise<DestinationCityResolution | null>
   travelOfferService?: TravelOfferSearchService
-  resolveExchangeRate?: (input: { baseCurrency: string; quoteCurrency: string }) => Promise<ExchangeRateResult>
+  resolveExchangeRate?: (input: {
+    baseCurrency: string
+    quoteCurrency: string
+  }) => Promise<ExchangeRateResult>
   now?: () => Date
 }
 
@@ -250,7 +260,10 @@ function toJson(value: unknown): Prisma.InputJsonValue | undefined {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue
 }
 
-export function serializeFlightSelection(selection: TripFlightSelection, now = new Date()): FlightSelectionResponse {
+export function serializeFlightSelection(
+  selection: TripFlightSelection,
+  now = new Date()
+): FlightSelectionResponse {
   const expired = selection.status === 'EXPIRED' || isExpired(selection.providerExpiresAt, now)
   return {
     id: selection.id,
@@ -283,7 +296,10 @@ export function serializeFlightSelection(selection: TripFlightSelection, now = n
   }
 }
 
-export function serializeHotelSelection(selection: TripHotelSelection, now = new Date()): HotelSelectionResponse {
+export function serializeHotelSelection(
+  selection: TripHotelSelection,
+  now = new Date()
+): HotelSelectionResponse {
   const expired = selection.status === 'EXPIRED' || isExpired(selection.providerExpiresAt, now)
   return {
     id: selection.id,
@@ -321,7 +337,9 @@ export class TripOfferSelectionService {
   private readonly db: typeof prisma
   private readonly getTrip: NonNullable<TripOfferSelectionDependencies['getTrip']>
   private readonly getPreferenceSet: NonNullable<TripOfferSelectionDependencies['getPreferenceSet']>
-  private readonly getPreferredCurrency: NonNullable<TripOfferSelectionDependencies['getPreferredCurrency']>
+  private readonly getPreferredCurrency: NonNullable<
+    TripOfferSelectionDependencies['getPreferredCurrency']
+  >
   private readonly resolveCity: NonNullable<TripOfferSelectionDependencies['resolveCity']>
   private readonly travelOfferService: TravelOfferSearchService
   private readonly resolveRate: NonNullable<TripOfferSelectionDependencies['resolveExchangeRate']>
@@ -329,7 +347,10 @@ export class TripOfferSelectionService {
 
   constructor(dependencies: TripOfferSelectionDependencies = {}) {
     this.db = dependencies.db ?? prisma
-    this.getTrip = dependencies.getTrip ?? ((tripId, userId) => (userId ? getTripById(tripId, userId) : prisma.trip.findUnique({ where: { id: tripId } })))
+    this.getTrip =
+      dependencies.getTrip ??
+      ((tripId, userId) =>
+        userId ? getTripById(tripId, userId) : prisma.trip.findUnique({ where: { id: tripId } }))
     this.getPreferenceSet = dependencies.getPreferenceSet ?? getPreferenceSet
     this.getPreferredCurrency = dependencies.getPreferredCurrency ?? defaultGetPreferredCurrency
     this.resolveCity = dependencies.resolveCity ?? resolveDestinationCity
@@ -355,7 +376,9 @@ export class TripOfferSelectionService {
     ])
 
     return {
-      flightSelection: flightSelection ? serializeFlightSelection(flightSelection, this.now()) : null,
+      flightSelection: flightSelection
+        ? serializeFlightSelection(flightSelection, this.now())
+        : null,
       hotelSelection: hotelSelection ? serializeHotelSelection(hotelSelection, this.now()) : null,
       historicalSelectionCounts: { flights: flightCount, hotels: hotelCount },
     }
@@ -370,7 +393,9 @@ export class TripOfferSelectionService {
   }): Promise<FlightSelectionResponse> {
     const context = await this.loadContext(input.tripId, input.userId)
     const request = this.flightRequest(context, input.simulationMode)
-    const result = await this.travelOfferService.searchFlights(request, { refresh: input.refreshOffers })
+    const result = await this.travelOfferService.searchFlights(request, {
+      refresh: input.refreshOffers,
+    })
     if (result.status !== 'SUCCESS') {
       throw new TripOfferSelectionError(
         'FLIGHT_OFFERS_UNAVAILABLE',
@@ -423,7 +448,9 @@ export class TripOfferSelectionService {
           originAirportCode: request.originAirportCode,
           destinationAirportCode: request.destinationAirportCode,
           departureDate: new Date(`${request.departureDate}T00:00:00.000Z`),
-          returnDate: request.returnDate ? new Date(`${request.returnDate}T00:00:00.000Z`) : undefined,
+          returnDate: request.returnDate
+            ? new Date(`${request.returnDate}T00:00:00.000Z`)
+            : undefined,
           itinerarySummary: toJson(flightItinerarySummary(offer))!,
           originalAmount: new Decimal(offer.totalPrice.amount),
           originalCurrency: offer.totalPrice.currency,
@@ -452,7 +479,9 @@ export class TripOfferSelectionService {
   }): Promise<HotelSelectionResponse> {
     const context = await this.loadContext(input.tripId, input.userId)
     const request = this.hotelRequest(context, input.simulationMode)
-    const result = await this.travelOfferService.searchHotels(request, { refresh: input.refreshOffers })
+    const result = await this.travelOfferService.searchHotels(request, {
+      refresh: input.refreshOffers,
+    })
     if (result.status !== 'SUCCESS') {
       throw new TripOfferSelectionError(
         'HOTEL_OFFERS_UNAVAILABLE',
@@ -540,14 +569,26 @@ export class TripOfferSelectionService {
       this.getPreferredCurrency(trip.userId),
     ])
     if (!preferences?.destination) {
-      throw new TripOfferSelectionError('PREFERENCES_NOT_FOUND', 'Trip destination preferences are missing.', 400)
+      throw new TripOfferSelectionError(
+        'PREFERENCES_NOT_FOUND',
+        'Trip destination preferences are missing.',
+        400
+      )
     }
     if (!travelProfile) {
-      throw new TripOfferSelectionError('TRAVEL_PROFILE_NOT_FOUND', 'Travel profile is required before selecting offers.', 400)
+      throw new TripOfferSelectionError(
+        'TRAVEL_PROFILE_NOT_FOUND',
+        'Travel profile is required before selecting offers.',
+        400
+      )
     }
     const destinationCity = await this.resolveCity(preferences.destination)
     if (!destinationCity) {
-      throw new TripOfferSelectionError('DESTINATION_CITY_NOT_FOUND', 'Destination city is not available.', 400)
+      throw new TripOfferSelectionError(
+        'DESTINATION_CITY_NOT_FOUND',
+        'Destination city is not available.',
+        400
+      )
     }
 
     return {
@@ -555,15 +596,26 @@ export class TripOfferSelectionService {
       preferences,
       travelProfile,
       destinationCity,
-      currency: requireString(travelProfile.currency ?? preferredCurrency, 'currency'),
+      currency: resolveTravelCurrency({
+        tripCurrency: travelProfile.currency,
+        userPreferredCurrency: preferredCurrency,
+        originAirportCode: travelProfile.originAirportCode,
+        originCountry: travelProfile.originCountry,
+      }).currency,
     }
   }
 
-  private flightRequest(context: SelectionContext, simulationMode?: TravelOfferSimulationMode): FlightSearchRequest {
+  private flightRequest(
+    context: SelectionContext,
+    simulationMode?: TravelOfferSimulationMode
+  ): FlightSearchRequest {
     const profile = context.travelProfile
     return {
       originAirportCode: requireString(profile.originAirportCode, 'originAirportCode'),
-      destinationAirportCode: requireString(profile.destinationAirportCode, 'destinationAirportCode'),
+      destinationAirportCode: requireString(
+        profile.destinationAirportCode,
+        'destinationAirportCode'
+      ),
       departureDate: requireDateOnly(profile.departureDate, 'departureDate'),
       returnDate: requireDateOnly(profile.returnDate, 'returnDate'),
       adults: profile.adults,
@@ -576,7 +628,10 @@ export class TripOfferSelectionService {
     }
   }
 
-  private hotelRequest(context: SelectionContext, simulationMode?: TravelOfferSimulationMode): HotelSearchRequest {
+  private hotelRequest(
+    context: SelectionContext,
+    simulationMode?: TravelOfferSimulationMode
+  ): HotelSearchRequest {
     const profile = context.travelProfile
     return {
       cityId: context.destinationCity.id,

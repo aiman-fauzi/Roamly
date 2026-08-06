@@ -99,7 +99,15 @@ const requestWithDestinationContext: GenerateItineraryRequest = {
     omittedCandidateCount: 0,
     serializedSize: 500,
     maxSerializedSize: 6000,
-    clusters: [{ id: 'cluster-1', centerLatitude: 3.145, centerLongitude: 101.695, candidateIds: ['ATTRACTION:kiyomizu-dera'], averageRankScore: 90 }],
+    clusters: [
+      {
+        id: 'cluster-1',
+        centerLatitude: 3.145,
+        centerLongitude: 101.695,
+        candidateIds: ['ATTRACTION:kiyomizu-dera'],
+        averageRankScore: 90,
+      },
+    ],
     nearestNeighbors: [],
     candidates: [
       {
@@ -114,7 +122,12 @@ const requestWithDestinationContext: GenerateItineraryRequest = {
         openingHours: [],
         openingHoursStatus: 'UNKNOWN',
         openingHoursKnown: false,
-        ticketPrice: { amount: 2500, currency: 'JPY', priceType: 'FIXED', confidence: 'KNOWN_PRICE' },
+        ticketPrice: {
+          amount: 2500,
+          currency: 'JPY',
+          priceType: 'FIXED',
+          confidence: 'KNOWN_PRICE',
+        },
         ticketPrices: [],
         ticketPriceStatus: 'VERIFIED',
         priceConfidence: 'KNOWN_PRICE',
@@ -133,7 +146,10 @@ const requestWithDestinationContext: GenerateItineraryRequest = {
   },
 }
 
-function createProvider(generateContent: TestGenerateContent, overrides: Partial<ConstructorParameters<typeof GeminiProvider>[0]> = {}) {
+function createProvider(
+  generateContent: TestGenerateContent,
+  overrides: Partial<ConstructorParameters<typeof GeminiProvider>[0]> = {}
+) {
   return new GeminiProvider({
     apiKey: 'test-key',
     model: 'gemini-test-model',
@@ -166,13 +182,14 @@ describe('GeminiProvider', () => {
 
     await expect(provider.generateItinerary(request)).resolves.toEqual(validItinerary)
 
+    expect(generateContent.mock.calls[0]?.[0].config).not.toHaveProperty('responseJsonSchema')
     expect(generateContent).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'gemini-test-model',
         config: expect.objectContaining({
           maxOutputTokens: 1800,
           responseMimeType: 'application/json',
-          responseJsonSchema: expect.objectContaining({ required: ['items'] }),
+          responseSchema: expect.objectContaining({ required: ['items'] }),
           temperature: 0.2,
           thinkingConfig: {
             includeThoughts: false,
@@ -242,14 +259,14 @@ describe('GeminiProvider', () => {
     expect(generateContent).toHaveBeenCalledWith(
       expect.objectContaining({
         config: expect.objectContaining({
-          responseJsonSchema: expect.objectContaining({
+          responseSchema: expect.objectContaining({
             properties: expect.objectContaining({
               items: expect.objectContaining({
-                maxItems: 1,
                 items: expect.objectContaining({
                   properties: expect.objectContaining({
-                    candidateId: { type: 'string', enum: ['ATTRACTION:kiyomizu-dera'] },
-                    day: expect.objectContaining({ maximum: 1 }),
+                    candidateId: expect.objectContaining({
+                      description: expect.stringContaining('1 supplied destination candidates'),
+                    }),
                   }),
                 }),
               }),
@@ -293,6 +310,137 @@ describe('GeminiProvider', () => {
     expect(delay).toHaveBeenCalledWith(2000)
   })
 
+  it('allows GEMINI_MAX_RETRIES=0 to disable retries for diagnostics', async () => {
+    const previousMaxRetries = process.env.GEMINI_MAX_RETRIES
+    process.env.GEMINI_MAX_RETRIES = '0'
+    try {
+      const rateLimitError = Object.assign(new Error('rate limited'), { status: 429 })
+      const generateContent = vi
+        .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+        .mockRejectedValue(rateLimitError)
+      const provider = createProvider(generateContent)
+
+      await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+        code: 'AI_RATE_LIMITED',
+        diagnostics: expect.objectContaining({
+          maxAttempts: 1,
+        }),
+      } satisfies Partial<GeminiProviderError>)
+
+      expect(generateContent).toHaveBeenCalledTimes(1)
+    } finally {
+      if (previousMaxRetries === undefined) delete process.env.GEMINI_MAX_RETRIES
+      else process.env.GEMINI_MAX_RETRIES = previousMaxRetries
+    }
+  })
+
+  it('classifies a missing Gemini API key before any provider request', () => {
+    const previousApiKey = process.env.GEMINI_API_KEY
+    delete process.env.GEMINI_API_KEY
+
+    try {
+      let error: unknown
+      try {
+        new GeminiProvider({ model: 'gemini-test-model' })
+      } catch (caught) {
+        error = caught
+      }
+      expect(error).toMatchObject({
+        code: 'AI_AUTHENTICATION_FAILURE',
+        diagnostics: expect.objectContaining({
+          responseReceived: false,
+          responseParsingState: 'not_started',
+        }),
+      } satisfies Partial<GeminiProviderError>)
+    } finally {
+      if (previousApiKey === undefined) delete process.env.GEMINI_API_KEY
+      else process.env.GEMINI_API_KEY = previousApiKey
+    }
+  })
+
+  it('distinguishes quota exhaustion from generic rate limiting', async () => {
+    const quotaError = Object.assign(
+      new Error(
+        JSON.stringify({
+          error: {
+            message: 'quota exceeded',
+            details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '33s' }],
+          },
+        })
+      ),
+      { status: 429 }
+    )
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockRejectedValue(quotaError)
+    const delay = vi.fn(async () => undefined)
+    const provider = createProvider(generateContent, { maxRetries: 1, delay })
+
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_QUOTA_EXCEEDED',
+      retryAfterMs: 33000,
+      diagnostics: expect.objectContaining({
+        status: 429,
+        responseReceived: false,
+        providerMessage: 'quota exceeded',
+      }),
+    } satisfies Partial<GeminiProviderError>)
+
+    expect(generateContent).toHaveBeenCalledTimes(2)
+    expect(delay).toHaveBeenCalledWith(33000)
+  })
+
+  it('classifies network failures separately from unknown failures', async () => {
+    const networkError = new TypeError('fetch failed')
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockRejectedValue(networkError)
+    const provider = createProvider(generateContent, { maxRetries: 1 })
+
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_NETWORK_FAILURE',
+      diagnostics: expect.objectContaining({
+        responseReceived: false,
+      }),
+    } satisfies Partial<GeminiProviderError>)
+
+    expect(generateContent).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries transient model-unavailable failures and reports the final category', async () => {
+    const modelError = Object.assign(new Error('model is unavailable'), { status: 503 })
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockRejectedValue(modelError)
+    const provider = createProvider(generateContent, { maxRetries: 1 })
+
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_MODEL_UNAVAILABLE',
+      diagnostics: expect.objectContaining({
+        status: 503,
+        maxAttempts: 2,
+      }),
+    } satisfies Partial<GeminiProviderError>)
+
+    expect(generateContent).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry response-schema request failures', async () => {
+    const schemaError = Object.assign(new Error('responseJsonSchema invalid argument'), {
+      status: 400,
+    })
+    const generateContent = vi
+      .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
+      .mockRejectedValue(schemaError)
+    const provider = createProvider(generateContent, { maxRetries: 2 })
+
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_SCHEMA_VALIDATION_FAILURE',
+    } satisfies Partial<GeminiProviderError>)
+
+    expect(generateContent).toHaveBeenCalledTimes(1)
+  })
+
   it('throws a friendly error when Gemini returns malformed JSON', async () => {
     const generateContent = vi
       .fn<[GenerateContentParameters], Promise<Pick<GenerateContentResponse, 'text'>>>()
@@ -318,5 +466,12 @@ describe('GeminiProvider', () => {
     await expect(provider.generateItinerary(request)).rejects.toThrow(
       'Gemini returned itinerary JSON with missing or invalid fields.'
     )
+    await expect(provider.generateItinerary(request)).rejects.toMatchObject({
+      code: 'AI_SCHEMA_VALIDATION_FAILURE',
+      diagnostics: expect.objectContaining({
+        responseReceived: true,
+        responseParsingState: 'schema_failed',
+      }),
+    } satisfies Partial<GeminiProviderError>)
   })
 })

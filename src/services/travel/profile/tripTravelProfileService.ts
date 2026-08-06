@@ -10,6 +10,7 @@ import type {
 import { prisma } from '@/db/client'
 import type { TripTravelProfileUpdateInput } from '@/lib/validations/travelOfferValidation'
 import { getProfileSummary } from '@/services/profileService'
+import { resolveTravelCurrency, type TravelCurrencySource } from '@/services/travel/currencyPolicy'
 
 export type PlanningStatus =
   | 'DRAFT'
@@ -34,7 +35,7 @@ export interface TripTravelProfileResponse {
   cabinClass: TravelCabinClass
   nonStopOnly: boolean
   currency?: string
-  currencySource: 'PERSISTED' | 'PROFILE' | 'MISSING'
+  currencySource: 'PERSISTED' | 'PROFILE' | 'ORIGIN_DEFAULT' | 'APPLICATION_FALLBACK' | 'MISSING'
   flightSelectionStrategy: FlightSelectionStrategy
   hotelSelectionStrategy: HotelSelectionStrategy
   createdAt: string
@@ -156,7 +157,10 @@ function normalizeInput(input: TripTravelProfileUpdateInput): NormalizedTripTrav
   assignDefined('originCountry', normalizeText(input.originCountry))
   assignDefined('originAirportCode', input.originAirportCode)
   assignDefined('destinationAirportCode', input.destinationAirportCode)
-  assignDefined('departureDate', input.departureDate ? dateOnlyToDate(input.departureDate) : undefined)
+  assignDefined(
+    'departureDate',
+    input.departureDate ? dateOnlyToDate(input.departureDate) : undefined
+  )
   assignDefined('returnDate', input.returnDate ? dateOnlyToDate(input.returnDate) : undefined)
   assignDefined('adults', input.adults)
   assignDefined('children', input.children)
@@ -165,8 +169,14 @@ function normalizeInput(input: TripTravelProfileUpdateInput): NormalizedTripTrav
   assignDefined('cabinClass', input.cabinClass as TravelCabinClass | undefined)
   assignDefined('nonStopOnly', input.nonStopOnly)
   assignDefined('currency', input.currency)
-  assignDefined('flightSelectionStrategy', input.flightSelectionStrategy as FlightSelectionStrategy | undefined)
-  assignDefined('hotelSelectionStrategy', input.hotelSelectionStrategy as HotelSelectionStrategy | undefined)
+  assignDefined(
+    'flightSelectionStrategy',
+    input.flightSelectionStrategy as FlightSelectionStrategy | undefined
+  )
+  assignDefined(
+    'hotelSelectionStrategy',
+    input.hotelSelectionStrategy as HotelSelectionStrategy | undefined
+  )
 
   return normalized
 }
@@ -177,7 +187,8 @@ function completeProfileDraft(
 ) {
   return {
     originAirportCode: input.originAirportCode ?? existing?.originAirportCode ?? undefined,
-    destinationAirportCode: input.destinationAirportCode ?? existing?.destinationAirportCode ?? undefined,
+    destinationAirportCode:
+      input.destinationAirportCode ?? existing?.destinationAirportCode ?? undefined,
     departureDate: input.departureDate ?? existing?.departureDate ?? undefined,
     returnDate: input.returnDate ?? existing?.returnDate ?? undefined,
     adults: input.adults ?? existing?.adults ?? 1,
@@ -210,12 +221,9 @@ function validateMergedProfile(profile: ReturnType<typeof completeProfileDraft>)
   }
 
   if (issues.length > 0) {
-    throw new TripTravelProfileError(
-      'INVALID_TRAVEL_PROFILE',
-      'Travel profile is invalid.',
-      400,
-      { issues }
-    )
+    throw new TripTravelProfileError('INVALID_TRAVEL_PROFILE', 'Travel profile is invalid.', 400, {
+      issues,
+    })
   }
 }
 
@@ -223,7 +231,10 @@ function dateEqual(first: Date | null | undefined, second: Date | null | undefin
   return dateToDateOnly(first) === dateToDateOnly(second)
 }
 
-function changedFields(existing: TripTravelProfile | null, input: NormalizedTripTravelProfileInput): Set<SearchCriticalField> {
+function changedFields(
+  existing: TripTravelProfile | null,
+  input: NormalizedTripTravelProfileInput
+): Set<SearchCriticalField> {
   const changed = new Set<SearchCriticalField>()
   if (!existing) return changed
 
@@ -232,7 +243,9 @@ function changedFields(existing: TripTravelProfile | null, input: NormalizedTrip
     const next = input[field]
     const current = existing[field]
     const isDateField = field === 'departureDate' || field === 'returnDate'
-    const isChanged = isDateField ? !dateEqual(current as Date | null, next as Date | undefined) : current !== next
+    const isChanged = isDateField
+      ? !dateEqual(current as Date | null, next as Date | undefined)
+      : current !== next
     if (isChanged) changed.add(field)
   }
 
@@ -282,7 +295,12 @@ export function serializeTravelProfile(
   preferredCurrency?: string | null
 ): TripTravelProfileResponse | null {
   if (!profile) return null
-  const currency = profile.currency ?? preferredCurrency ?? undefined
+  const resolved = resolveTravelCurrency({
+    tripCurrency: profile.currency,
+    userPreferredCurrency: preferredCurrency,
+    originAirportCode: profile.originAirportCode,
+    originCountry: profile.originCountry,
+  })
   return {
     id: profile.id,
     tripId: profile.tripId,
@@ -298,13 +316,25 @@ export function serializeTravelProfile(
     rooms: profile.rooms,
     cabinClass: profile.cabinClass,
     nonStopOnly: profile.nonStopOnly,
-    currency,
-    currencySource: profile.currency ? 'PERSISTED' : preferredCurrency ? 'PROFILE' : 'MISSING',
+    currency: resolved.currency,
+    currencySource: currencySourceForProfile(profile.currency, preferredCurrency, resolved.source),
     flightSelectionStrategy: profile.flightSelectionStrategy,
     hotelSelectionStrategy: profile.hotelSelectionStrategy,
     createdAt: profile.createdAt.toISOString(),
     updatedAt: profile.updatedAt.toISOString(),
   }
+}
+
+function currencySourceForProfile(
+  persistedCurrency: string | null,
+  preferredCurrency: string | null | undefined,
+  resolvedSource: TravelCurrencySource
+): TripTravelProfileResponse['currencySource'] {
+  if (persistedCurrency) return 'PERSISTED'
+  if (preferredCurrency) return 'PROFILE'
+  if (resolvedSource === 'ORIGIN_DEFAULT') return 'ORIGIN_DEFAULT'
+  if (resolvedSource === 'APPLICATION_FALLBACK') return 'APPLICATION_FALLBACK'
+  return 'MISSING'
 }
 
 export class TripTravelProfileService {
@@ -331,7 +361,14 @@ export class TripTravelProfileService {
         where: { tripId: input.tripId, status: 'SELECTED' as TripOfferSelectionStatus },
       }),
     ])
-    const currency = profile?.currency ?? preferredCurrency
+    const currency = profile
+      ? resolveTravelCurrency({
+          tripCurrency: profile.currency,
+          userPreferredCurrency: preferredCurrency,
+          originAirportCode: profile.originAirportCode,
+          originCountry: profile.originCountry,
+        }).currency
+      : preferredCurrency
 
     return {
       travelProfile: serializeTravelProfile(profile, preferredCurrency),
@@ -350,7 +387,11 @@ export class TripTravelProfileService {
     userId: string
     data: TripTravelProfileUpdateInput
     hasCompleteItinerary?: boolean
-  }): Promise<{ travelProfile: TripTravelProfileResponse; readiness: PlanningReadiness; invalidated: string[] }> {
+  }): Promise<{
+    travelProfile: TripTravelProfileResponse
+    readiness: PlanningReadiness
+    invalidated: string[]
+  }> {
     const existing = await this.db.tripTravelProfile.findUnique({ where: { tripId: input.tripId } })
     const normalized = normalizeInput(input.data)
     const merged = completeProfileDraft(existing, normalized)
@@ -403,7 +444,12 @@ export class TripTravelProfileService {
       travelProfile: serializeTravelProfile(profile, preferredCurrency)!,
       readiness: readiness(
         profile,
-        profile.currency ?? preferredCurrency,
+        resolveTravelCurrency({
+          tripCurrency: profile.currency,
+          userPreferredCurrency: preferredCurrency,
+          originAirportCode: profile.originAirportCode,
+          originCountry: profile.originCountry,
+        }).currency,
         Boolean(currentFlight),
         Boolean(currentHotel),
         Boolean(input.hasCompleteItinerary)

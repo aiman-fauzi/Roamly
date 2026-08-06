@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DestinationRetrievalService,
+  applyCandidateDiversityControls,
   filterEligibleDestinationCandidates,
   rankDestinationCandidates,
 } from '@/services/destinations/destinationRetrievalService'
@@ -22,6 +23,10 @@ import {
   groupNearbyCandidates,
   haversineDistanceKm,
 } from '@/services/destinations/geo'
+import {
+  retrievalCategoriesForDestination,
+  selectDestinationDisplayName,
+} from '@/services/destinations/retrievalTaxonomy'
 import type {
   DestinationCandidate,
   DestinationRetrievalResult,
@@ -83,6 +88,83 @@ function ranked(overrides: Partial<RankedDestinationCandidate>): RankedDestinati
 }
 
 describe('destination retrieval helpers', () => {
+  it('maps imported attraction categories into retrieval taxonomy without collapsing to museum', () => {
+    expect(retrievalCategoriesForDestination({ sourceCategories: ['place-of-worship'] })).toEqual([
+      'religious',
+      'culture',
+      'history',
+    ])
+    expect(
+      retrievalCategoriesForDestination({ sourceCategories: ['market', 'marketplace'] })
+    ).toEqual(['market', 'food', 'shopping', 'culture'])
+    expect(retrievalCategoriesForDestination({ sourceCategories: ['aquarium'] })).toEqual([
+      'family',
+      'entertainment',
+    ])
+    expect(retrievalCategoriesForDestination({ sourceCategories: ['viewpoint'] })).toEqual([
+      'viewpoint',
+      'nature',
+    ])
+    expect(retrievalCategoriesForDestination({ sourceCategories: ['night_market'] })).toEqual([
+      'night_market',
+      'market',
+      'food',
+      'shopping',
+      'culture',
+      'entertainment',
+    ])
+    expect(retrievalCategoriesForDestination({ sourceCategories: ['cable_car'] })).toEqual([
+      'cable_car',
+      'island',
+      'family',
+      'entertainment',
+      'viewpoint',
+    ])
+    expect(retrievalCategoriesForDestination({ sourceCategories: ['safari'] })).toEqual([
+      'safari',
+      'family',
+      'nature',
+      'entertainment',
+    ])
+  })
+
+  it('selects non-destructive display names with English and local fallbacks', () => {
+    expect(
+      selectDestinationDisplayName({
+        primaryName: 'วัดหลักสี่',
+        localName: 'วัดหลักสี่',
+        verifiedEnglishName: 'Laksi Temple',
+      })
+    ).toMatchObject({ displayName: 'Laksi Temple', displayNameSource: 'verifiedEnglishName' })
+    expect(
+      selectDestinationDisplayName({
+        primaryName: 'วัดหลักสี่',
+        localName: 'วัดหลักสี่',
+      })
+    ).toMatchObject({ displayName: 'วัดหลักสี่', displayNameSource: 'primaryName' })
+    expect(
+      selectDestinationDisplayName({
+        primaryName: 'Sea Life Bangkok',
+        localName: null,
+        osmEnglishName: 'Sea Life Bangkok',
+      })
+    ).toMatchObject({ displayName: 'Sea Life Bangkok', displayNameSource: 'osmEnglishName' })
+    expect(
+      selectDestinationDisplayName({
+        primaryName: 'Madame Tussauds Bangkok',
+        localName: 'Madame Tussauds Bangkok',
+        osmEnglishName: '',
+      })
+    ).toMatchObject({ displayName: 'Madame Tussauds Bangkok', displayNameSource: 'primaryName' })
+    expect(
+      selectDestinationDisplayName({
+        primaryName: 'Official Primary',
+        localName: 'Official Primary',
+        osmEnglishName: null,
+      })
+    ).toMatchObject({ displayName: 'Official Primary', englishName: null })
+  })
+
   it('filters candidates by city and excludes legacy broad guide pages', () => {
     const eligible = filterEligibleDestinationCandidates(
       [
@@ -230,6 +312,146 @@ describe('destination retrieval helpers', () => {
     expect(rankedCandidates[1].penaltiesApplied).toContain('WEAK_PREFERENCE_MATCH')
   })
 
+  it('propagates imported attraction tags and provenance English names into retrieval candidates', async () => {
+    const updatedAt = new Date('2026-08-04T00:00:00.000Z')
+    const city = {
+      id: 'city-1',
+      name: 'Bangkok',
+      slug: 'bangkok',
+      latitude: 13.75,
+      longitude: 100.5,
+      country: { name: 'Thailand', slug: 'thailand', currencyCode: 'THB' },
+    }
+    const db = {
+      attraction: {
+        findMany: async () => [
+          {
+            id: 'laksi-temple',
+            cityId: 'city-1',
+            name: 'วัดหลักสี่',
+            slug: 'laksi-temple',
+            description: null,
+            address: null,
+            latitude: 13.88,
+            longitude: 100.58,
+            websiteUrl: 'https://www.openstreetmap.org/node/1',
+            phone: null,
+            priceLevel: null,
+            durationMinutes: null,
+            updatedAt,
+            city,
+            tags: [
+              { name: 'place_of_worship', slug: 'place-of-worship' },
+              { name: 'place_of_worship', slug: 'place-of-worship' },
+            ],
+            openingHours: [],
+            enrichment: null,
+          },
+        ],
+      },
+      destinationSourceProvenance: {
+        findMany: async () => [
+          {
+            entityId: 'laksi-temple',
+            externalIds: { englishName: 'Laksi Temple', englishNameSource: 'osm:name:en' },
+          },
+        ],
+      },
+      restaurant: { findMany: async () => [] },
+      hotel: { findMany: async () => [] },
+      activity: { findMany: async () => [] },
+    }
+    const factService = { resolveEffectiveFactsForEntities: async () => new Map() }
+    const service = new DestinationRetrievalService(db as never, factService as never)
+
+    const result = await service.retrieve({ cityId: 'city-1', interests: ['temples', 'history'] })
+
+    expect(result.candidates[0]).toMatchObject({
+      candidateId: 'ATTRACTION:laksi-temple',
+      name: 'Laksi Temple',
+      primaryName: 'วัดหลักสี่',
+      localName: 'วัดหลักสี่',
+      englishName: 'Laksi Temple',
+      displayNameSource: 'osmEnglishName',
+      categories: expect.arrayContaining(['religious', 'culture', 'history']),
+      sourceCategories: expect.arrayContaining(['place-of-worship']),
+    })
+    expect(result.candidates[0].preferenceMatch?.strongMatches).toEqual(
+      expect.arrayContaining(['religious', 'history'])
+    )
+  })
+
+  it('applies category diversity controls before final candidate selection', () => {
+    const rankedCandidates = [
+      ranked({
+        candidateId: 'ATTRACTION:museum-1',
+        id: 'museum-1',
+        name: 'Museum 1',
+        categories: ['museum'],
+        rankScore: 100,
+      }),
+      ranked({
+        candidateId: 'ATTRACTION:museum-2',
+        id: 'museum-2',
+        name: 'Museum 2',
+        categories: ['museum'],
+        rankScore: 99,
+      }),
+      ranked({
+        candidateId: 'ATTRACTION:museum-3',
+        id: 'museum-3',
+        name: 'Museum 3',
+        categories: ['museum'],
+        rankScore: 98,
+      }),
+      ranked({
+        candidateId: 'ATTRACTION:museum-4',
+        id: 'museum-4',
+        name: 'Museum 4',
+        categories: ['museum'],
+        rankScore: 97,
+      }),
+      ranked({
+        candidateId: 'ATTRACTION:market',
+        id: 'market',
+        name: 'Market',
+        categories: ['market'],
+        rankScore: 82,
+      }),
+      ranked({
+        candidateId: 'ATTRACTION:aquarium',
+        id: 'aquarium',
+        name: 'Aquarium',
+        categories: ['family'],
+        rankScore: 80,
+      }),
+      ranked({
+        candidateId: 'ATTRACTION:landmark',
+        id: 'landmark',
+        name: 'Landmark',
+        categories: ['landmark'],
+        rankScore: 78,
+      }),
+    ]
+
+    const selected = applyCandidateDiversityControls(rankedCandidates, {
+      cityId: 'city-1',
+      limitPerType: 6,
+    })
+    const categoryCounts = selected.reduce<Record<string, number>>((counts, item) => {
+      const category = item.categories[0] ?? 'unknown'
+      counts[category] = (counts[category] ?? 0) + 1
+      return counts
+    }, {})
+
+    expect(selected).toHaveLength(6)
+    expect(categoryCounts.museum).toBeLessThanOrEqual(3)
+    expect(Object.keys(categoryCounts)).toEqual(
+      expect.arrayContaining(['museum', 'market', 'family'])
+    )
+    expect(selected[0].candidateId).toBe('ATTRACTION:museum-1')
+  })
+
   it('marks generic sports activities ineligible when Sports is not selected', () => {
     const [rankedCandidate] = rankDestinationCandidates(
       [
@@ -314,9 +536,9 @@ describe('destination retrieval helpers', () => {
     )
 
     expect(rankedCandidates[0].candidateId).toBe('RESTAURANT:local')
-    expect(rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:mcdonalds')?.penaltiesApplied).toContain(
-      'CHAIN_BRAND_LOW_PRIORITY'
-    )
+    expect(
+      rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:mcdonalds')?.penaltiesApplied
+    ).toContain('CHAIN_BRAND_LOW_PRIORITY')
   })
 
   it('penalizes locality-name mismatches without rejecting proven local branches outright', () => {
@@ -406,12 +628,12 @@ describe('destination retrieval helpers', () => {
       { cityId: 'city-1', interests: ['food'] }
     )
 
-    expect(rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:branch-b')?.duplicateStatus).toBe(
-      'SAME_BRAND_DIFFERENT_BRANCH'
-    )
-    expect(rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:nearby')?.duplicateStatus).toBe(
-      'POSSIBLE_DUPLICATE'
-    )
+    expect(
+      rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:branch-b')?.duplicateStatus
+    ).toBe('SAME_BRAND_DIFFERENT_BRANCH')
+    expect(
+      rankedCandidates.find((item) => item.candidateId === 'RESTAURANT:nearby')?.duplicateStatus
+    ).toBe('POSSIBLE_DUPLICATE')
   })
 
   it('calculates Haversine distance in kilometres', () => {
@@ -435,7 +657,9 @@ describe('destination retrieval helpers', () => {
     const neighbors = buildNearestNeighbors(candidates, 1)
 
     expect(clusters[0].candidateIds).toEqual(['ATTRACTION:a', 'ATTRACTION:b'])
-    expect(neighbors.find((entry) => entry.candidateId === 'ATTRACTION:a')?.neighbors[0]).toMatchObject({
+    expect(
+      neighbors.find((entry) => entry.candidateId === 'ATTRACTION:a')?.neighbors[0]
+    ).toMatchObject({
       candidateId: 'ATTRACTION:b',
     })
   })
@@ -490,8 +714,20 @@ describe('destination retrieval helpers', () => {
     const retrieval: DestinationRetrievalResult = {
       cityId: 'city-1',
       candidates: [
-        ranked({ candidateId: 'ATTRACTION:a', id: 'a', entityType: 'ATTRACTION', name: 'A', rankScore: 100 }),
-        ranked({ candidateId: 'ATTRACTION:b', id: 'b', entityType: 'ATTRACTION', name: 'B', rankScore: 99 }),
+        ranked({
+          candidateId: 'ATTRACTION:a',
+          id: 'a',
+          entityType: 'ATTRACTION',
+          name: 'A',
+          rankScore: 100,
+        }),
+        ranked({
+          candidateId: 'ATTRACTION:b',
+          id: 'b',
+          entityType: 'ATTRACTION',
+          name: 'B',
+          rankScore: 99,
+        }),
         ranked({
           candidateId: 'RESTAURANT:c',
           id: 'c',
@@ -683,7 +919,10 @@ describe('destination retrieval helpers', () => {
             durationMinutes: 90,
             updatedAt,
             city,
-            tags: [{ name: 'heritage', slug: 'heritage' }, { name: 'shopping', slug: 'shopping' }],
+            tags: [
+              { name: 'heritage', slug: 'heritage' },
+              { name: 'shopping', slug: 'shopping' },
+            ],
             openingHours: [],
             enrichment: null,
           },

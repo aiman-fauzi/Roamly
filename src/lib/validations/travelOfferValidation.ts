@@ -218,9 +218,46 @@ export const offerSelectionRequestSchema = z.object({
   refreshOffers: z.boolean().optional(),
 })
 
+export const travelSelectionSaveSchema = z
+  .object({
+    originAirportCode: airportCodeSchema,
+    destinationAirportCode: airportCodeSchema,
+    outboundDate: isoDateSchema,
+    returnDate: isoDateSchema,
+    travellers: z.coerce.number().int().min(1).max(DEFAULT_MAX_TRAVELERS),
+    rooms: z.coerce.number().int().min(1).max(8),
+    cabinClass: cabinClassSchema,
+    currency: currencySchema,
+    selectedOutboundFlightId: z.string().trim().min(1).max(220),
+    selectedReturnFlightId: z.string().trim().min(1).max(220),
+    selectedHotelId: z.string().trim().min(1).max(220),
+    expectedVersion: z.coerce.number().int().min(0),
+  })
+  .superRefine((value, ctx) => {
+    if (value.returnDate <= value.outboundDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['returnDate'],
+        message: 'Return date must be after outbound date.',
+      })
+    }
+    if (value.rooms > value.travellers && !allowRoomsGreaterThanTravelers()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['rooms'],
+        message: 'Room count cannot be greater than traveller count.',
+      })
+    }
+  })
+
+export const travelSelectionClearSchema = z.object({
+  expectedVersion: z.coerce.number().int().min(0),
+})
+
 export type FlightSearchRequestInput = z.infer<typeof flightSearchRequestSchema>
 export type HotelSearchRequestInput = z.infer<typeof hotelSearchRequestSchema>
 export type PersistedTripTravelPlanningRequestInput = z.infer<typeof persistedTripTravelPlanningRequestSchema>
 export type TripTravelProfileUpdateInput = z.infer<typeof tripTravelProfileUpdateSchema>
 export type TripTravelPlanningRequestInput = z.infer<typeof tripTravelPlanningRequestSchema>
 export type OfferSelectionRequestInput = z.infer<typeof offerSelectionRequestSchema>
+export type TravelSelectionSaveInput = z.infer<typeof travelSelectionSaveSchema>

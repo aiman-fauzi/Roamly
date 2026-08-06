@@ -1,5 +1,11 @@
 import type { GeminiDestinationContext } from '@/services/destinations/types'
 import type { ExchangeRateResult } from '@/services/exchangeRateService'
+import type {
+  FlightOption,
+  MockAvailabilityStatus,
+  MockTravelDataStatus,
+} from '@/services/travel/flights/types'
+import type { HotelOption, PhuQuocHotelArea } from '@/services/travel/hotels/types'
 
 export type TravelOfferResultStatus =
   | 'SUCCESS'
@@ -73,6 +79,14 @@ export interface FlightOffer {
   bookingUrl?: string
   fetchedAt: string
   expiresAt?: string
+  dataStatus?: MockTravelDataStatus
+  availabilityStatus?: MockAvailabilityStatus
+  mockFlightPair?: {
+    outboundFlightId: string
+    returnFlightId: string
+    outbound: FlightOption
+    return: FlightOption
+  }
 }
 
 export interface HotelSearchRequest {
@@ -108,6 +122,15 @@ export interface HotelOffer {
   fetchedAt: string
   expiresAt?: string
   distanceFromItineraryCenterKm?: number
+  dataStatus?: MockTravelDataStatus
+  availabilityStatus?: MockAvailabilityStatus
+  mockHotel?: {
+    hotelId: string
+    area: PhuQuocHotelArea
+    nights: number
+    rooms: number
+    option: HotelOption
+  }
 }
 
 export type TravelOfferSimulationMode = 'NORMAL' | 'EMPTY' | 'RATE_LIMITED' | 'TEMPORARY_FAILURE'
@@ -140,11 +163,7 @@ export interface HotelOfferProvider {
   searchHotels(request: HotelSearchRequest): Promise<HotelSearchResult>
 }
 
-export type FlightOfferSelectionStrategy =
-  | 'CHEAPEST'
-  | 'SHORTEST'
-  | 'FEWEST_STOPS'
-  | 'BEST_VALUE'
+export type FlightOfferSelectionStrategy = 'CHEAPEST' | 'SHORTEST' | 'FEWEST_STOPS' | 'BEST_VALUE'
 
 export type HotelOfferSelectionStrategy =
   | 'CHEAPEST'

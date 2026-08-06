@@ -6,10 +6,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { DayCard } from '@/components/features/itinerary/DayCard'
 import { ItineraryHeader } from '@/components/features/itinerary/ItineraryHeader'
 import { ItineraryTimeline } from '@/components/features/itinerary/ItineraryTimeline'
+import { TravelContextSummary } from '@/components/features/travel/TravelContextSummary'
+import { TravelPlanningWorkspace } from '@/components/features/travel/TravelPlanningWorkspace'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { API } from '@/constants/api'
 import { ROUTES } from '@/constants/routes'
+import type { ItineraryTravelContext } from '@/services/travel/planning/liveTravelContext'
 import type { ApiErrorResponse } from '@/types/api'
 import type { Itinerary } from '@/types/itinerary'
 import type { TripWithPreferences } from '@/types/trip'
@@ -20,7 +23,11 @@ interface ItineraryViewProps {
 
 const loadingSteps = ['Loading trip details', 'Checking itinerary status', 'Preparing timeline']
 
-function isRichItinerary(value: unknown): value is Itinerary {
+type ItineraryWithTravel = Itinerary & {
+  itineraryTravelContext?: ItineraryTravelContext
+}
+
+function isRichItinerary(value: unknown): value is ItineraryWithTravel {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<Itinerary>
   return (
@@ -63,7 +70,7 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
       }
 
       const data = (await response.json()) as TripWithPreferences
-      if (data.status === 'DRAFT') {
+      if (data.status === 'DRAFT' && !data.preferenceSet) {
         router.replace(ROUTES.tripQuestionnaire(tripId))
         return
       }
@@ -136,21 +143,27 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
 
   if (!itinerary) {
     return (
-      <div className="surface-panel p-8 text-center sm:p-10">
-        <div
-          aria-hidden="true"
-          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-atlas-50 text-2xl font-bold text-atlas-700"
-        >
-          AI
+      <div className="space-y-6">
+        <div className="surface-panel p-8 text-center sm:p-10">
+          <div
+            aria-hidden="true"
+            className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-atlas-50 text-2xl font-bold text-atlas-700"
+          >
+            AI
+          </div>
+          <h1 className="mt-5 text-heading text-neutral-900">No itinerary yet</h1>
+          <p className="mx-auto mt-3 max-w-md text-neutral-700">
+            Choose sample flights and a hotel first, then generate a timeline with timing-aware
+            planning.
+          </p>
         </div>
-        <h1 className="mt-5 text-heading text-neutral-900">No itinerary yet</h1>
-        <p className="mx-auto mt-3 max-w-md text-neutral-700">
-          Finish the questionnaire and Roamly will generate a timeline, costs, transport notes, and
-          budget summary.
-        </p>
-        <Button className="mt-6" onClick={() => router.push(ROUTES.tripQuestionnaire(tripId))}>
-          Continue questionnaire
-        </Button>
+        {trip ? (
+          <TravelPlanningWorkspace trip={trip} onComplete={fetchTrip} />
+        ) : (
+          <Button className="mt-6" onClick={() => router.push(ROUTES.tripQuestionnaire(tripId))}>
+            Continue questionnaire
+          </Button>
+        )}
       </div>
     )
   }
@@ -158,6 +171,9 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
   return (
     <div className="space-y-8">
       <ItineraryHeader itinerary={itinerary} destination={trip?.preferenceSet?.destination} />
+      {itinerary.itineraryTravelContext && (
+        <TravelContextSummary context={itinerary.itineraryTravelContext} />
+      )}
       <ItineraryTimeline roadmap={itinerary.roadmap} />
       <div className="space-y-5">
         {itinerary.days.map((day) => (

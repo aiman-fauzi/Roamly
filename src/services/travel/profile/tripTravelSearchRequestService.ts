@@ -8,6 +8,7 @@ import {
 } from '@/services/destinations/destinationRetrievalService'
 import { getPreferenceSet } from '@/services/preferenceService'
 import { getProfileSummary } from '@/services/profileService'
+import { resolveTravelCurrency } from '@/services/travel/currencyPolicy'
 import type { FlightSearchRequest, HotelSearchRequest } from '@/services/travel/offers/types'
 import { dateToDateOnly } from '@/services/travel/profile/tripTravelProfileService'
 import { getTripById } from '@/services/tripService'
@@ -71,13 +72,20 @@ function requireDate(value: Date | null | undefined, field: string): string {
 export class TripTravelSearchRequestService {
   private readonly db: typeof prisma
   private readonly getTrip: NonNullable<TripTravelSearchRequestDependencies['getTrip']>
-  private readonly getPreferenceSet: NonNullable<TripTravelSearchRequestDependencies['getPreferenceSet']>
-  private readonly getPreferredCurrency: NonNullable<TripTravelSearchRequestDependencies['getPreferredCurrency']>
+  private readonly getPreferenceSet: NonNullable<
+    TripTravelSearchRequestDependencies['getPreferenceSet']
+  >
+  private readonly getPreferredCurrency: NonNullable<
+    TripTravelSearchRequestDependencies['getPreferredCurrency']
+  >
   private readonly resolveCity: NonNullable<TripTravelSearchRequestDependencies['resolveCity']>
 
   constructor(dependencies: TripTravelSearchRequestDependencies = {}) {
     this.db = dependencies.db ?? prisma
-    this.getTrip = dependencies.getTrip ?? ((tripId, userId) => (userId ? getTripById(tripId, userId) : prisma.trip.findUnique({ where: { id: tripId } })))
+    this.getTrip =
+      dependencies.getTrip ??
+      ((tripId, userId) =>
+        userId ? getTripById(tripId, userId) : prisma.trip.findUnique({ where: { id: tripId } }))
     this.getPreferenceSet = dependencies.getPreferenceSet ?? getPreferenceSet
     this.getPreferredCurrency = dependencies.getPreferredCurrency ?? defaultGetPreferredCurrency
     this.resolveCity = dependencies.resolveCity ?? resolveDestinationCity
@@ -97,35 +105,56 @@ export class TripTravelSearchRequestService {
       this.getPreferredCurrency(trip.userId),
     ])
     if (!preferences?.destination) {
-      throw new TripTravelSearchRequestError('PREFERENCES_NOT_FOUND', 'Trip destination preferences are missing.', 400)
+      throw new TripTravelSearchRequestError(
+        'PREFERENCES_NOT_FOUND',
+        'Trip destination preferences are missing.',
+        400
+      )
     }
     if (!travelProfile) {
-      throw new TripTravelSearchRequestError('TRAVEL_PROFILE_NOT_FOUND', 'Travel profile is required before offer search.', 400)
+      throw new TripTravelSearchRequestError(
+        'TRAVEL_PROFILE_NOT_FOUND',
+        'Travel profile is required before offer search.',
+        400
+      )
     }
 
     const destinationCity = await this.resolveCity(preferences.destination)
     if (!destinationCity) {
-      throw new TripTravelSearchRequestError('DESTINATION_CITY_NOT_FOUND', 'Destination city is not available.', 400)
+      throw new TripTravelSearchRequestError(
+        'DESTINATION_CITY_NOT_FOUND',
+        'Destination city is not available.',
+        400
+      )
     }
 
     const overrides = input.overrides ?? {}
-    const departureDate = overrides.departureDate ?? requireDate(travelProfile.departureDate, 'departureDate')
+    const departureDate =
+      overrides.departureDate ?? requireDate(travelProfile.departureDate, 'departureDate')
     const returnDate = overrides.returnDate ?? requireDate(travelProfile.returnDate, 'returnDate')
     const adults = overrides.adults ?? travelProfile.adults
     const children = overrides.children ?? travelProfile.children
-    const currency = overrides.currency ?? travelProfile.currency ?? preferredCurrency
+    const currency = resolveTravelCurrency({
+      tripCurrency: overrides.currency ?? travelProfile.currency,
+      userPreferredCurrency: preferredCurrency,
+      originAirportCode: overrides.originAirportCode ?? travelProfile.originAirportCode,
+      originCountry: overrides.originCountry ?? travelProfile.originCountry,
+    }).currency
 
     const flightRequest: FlightSearchRequest = {
-      originAirportCode: overrides.originAirportCode ?? requireValue(travelProfile.originAirportCode, 'originAirportCode'),
+      originAirportCode:
+        overrides.originAirportCode ??
+        requireValue(travelProfile.originAirportCode, 'originAirportCode'),
       destinationAirportCode:
-        overrides.destinationAirportCode ?? requireValue(travelProfile.destinationAirportCode, 'destinationAirportCode'),
+        overrides.destinationAirportCode ??
+        requireValue(travelProfile.destinationAirportCode, 'destinationAirportCode'),
       departureDate,
       returnDate,
       adults,
       children,
       infants: overrides.infants ?? travelProfile.infants,
       cabinClass: overrides.cabinClass ?? travelProfile.cabinClass,
-      currency: requireValue(currency, 'currency'),
+      currency,
       nonStopOnly: overrides.nonStopOnly ?? travelProfile.nonStopOnly,
       simulationMode: overrides.simulationMode,
     }

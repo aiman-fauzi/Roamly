@@ -25,7 +25,11 @@ interface QuestionnaireShellProps {
   tripId: string
 }
 
-const generationSteps = ['Finding attractions', 'Optimising route', 'Estimating costs', 'Finalising itinerary']
+const generationSteps = [
+  'Saving preferences',
+  'Opening travel options',
+  'Preparing sample planning',
+]
 
 export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
   const router = useRouter()
@@ -79,17 +83,7 @@ export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
         return
       }
 
-      toast.success('Preferences saved.')
-
-      const generateResponse = await fetch(API.tripGenerate(tripId), { method: 'POST' })
-      if (!generateResponse.ok) {
-        const message = await readError(generateResponse, 'Unable to generate itinerary.')
-        setSubmitError(message)
-        toast.error('Unable to generate itinerary.', message)
-        return
-      }
-
-      toast.success('Itinerary generated.', 'Your travel plan is ready.')
+      toast.success('Preferences saved.', 'Choose sample flights and a hotel next.')
       router.push(ROUTES.tripItinerary(tripId))
       router.refresh()
     } catch {
@@ -120,8 +114,12 @@ export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
       <div className="surface-panel overflow-hidden p-5 sm:p-8">
         <div className="mb-6 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-atlas-700">Trip questionnaire</p>
-            <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">Shape your itinerary</h1>
+            <p className="text-sm font-semibold uppercase tracking-wide text-atlas-700">
+              Trip questionnaire
+            </p>
+            <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">
+              Shape your itinerary
+            </h1>
           </div>
           <p className="text-sm font-medium text-neutral-700" aria-live="polite">
             Saved locally
@@ -149,14 +147,20 @@ export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
         )}
 
         {isSubmitting && (
-          <div className="mt-4 rounded-card border border-atlas-100 bg-atlas-50 p-4 text-sm text-atlas-700" aria-live="polite">
+          <div
+            className="mt-4 rounded-card border border-atlas-100 bg-atlas-50 p-4 text-sm text-atlas-700"
+            aria-live="polite"
+          >
             <div className="flex items-center gap-3 font-semibold">
               <Spinner size="sm" />
-              Planning your journey...
+              Preparing your trip workspace...
             </div>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2">
               {generationSteps.map((step) => (
-                <li key={step} className="flex items-center gap-2 rounded-full bg-white/75 px-3 py-2">
+                <li
+                  key={step}
+                  className="flex items-center gap-2 rounded-full bg-white/75 px-3 py-2"
+                >
                   <span aria-hidden="true" className="h-2 w-2 rounded-full bg-atlas-500" />
                   {step}
                 </li>
@@ -178,9 +182,9 @@ export function QuestionnaireShell({ tripId }: QuestionnaireShellProps) {
             type="button"
             onClick={handlePrimaryAction}
             isLoading={isSubmitting}
-            loadingLabel="Planning..."
+            loadingLabel="Saving..."
           >
-            {currentStep === TOTAL_STEPS ? 'Generate itinerary' : 'Next'}
+            {currentStep === TOTAL_STEPS ? 'Continue to travel options' : 'Next'}
           </Button>
         </div>
       </div>

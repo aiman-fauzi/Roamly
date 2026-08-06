@@ -23,7 +23,9 @@ const hotelOffer: HotelOffer = {
   fetchedAt: '2026-08-05T00:00:00.000Z',
 }
 
-function attraction(overrides: Partial<RankedDestinationCandidate> = {}): RankedDestinationCandidate {
+function attraction(
+  overrides: Partial<RankedDestinationCandidate> = {}
+): RankedDestinationCandidate {
   return {
     candidateId: 'ATTRACTION:central-market',
     id: 'central-market',
@@ -122,17 +124,48 @@ describe('TripBudgetService', () => {
       contingencyPercent: 10,
     })
 
-    expect(summary.flight).toMatchObject({ status: 'KNOWN', amount: { amount: '450.00', currency: 'MYR' } })
-    expect(summary.accommodation).toMatchObject({ status: 'KNOWN', amount: { amount: '900.00', currency: 'MYR' } })
-    expect(summary.attractions).toMatchObject({ status: 'PARTIAL', amount: { amount: '40.00', currency: 'MYR' } })
-    expect(summary.food).toMatchObject({ status: 'ESTIMATED', amount: { amount: '320.00', currency: 'MYR' } })
-    expect(summary.localTransport).toMatchObject({ status: 'ESTIMATED', amount: { amount: '120.00', currency: 'MYR' } })
+    expect(summary.flight).toMatchObject({
+      status: 'KNOWN',
+      amount: { amount: '450.00', currency: 'MYR' },
+    })
+    expect(summary.accommodation).toMatchObject({
+      status: 'KNOWN',
+      amount: { amount: '900.00', currency: 'MYR' },
+    })
+    expect(summary.attractions).toMatchObject({
+      status: 'PARTIAL',
+      amount: { amount: '40.00', currency: 'MYR' },
+    })
+    expect(summary.food).toMatchObject({
+      status: 'ESTIMATED',
+      amount: { amount: '320.00', currency: 'MYR' },
+    })
+    expect(summary.localTransport).toMatchObject({
+      status: 'ESTIMATED',
+      amount: { amount: '120.00', currency: 'MYR' },
+    })
     expect(summary.contingency.amount).toEqual({ amount: '183.00', currency: 'MYR' })
     expect(summary.total).toMatchObject({
       amount: { amount: '2013.00', currency: 'MYR' },
       perPersonAmount: { amount: '1006.50', currency: 'MYR' },
       remainingBudget: { amount: '-13.00', currency: 'MYR' },
       isBudgetExceeded: true,
+    })
+    expect(summary.costSummary).toMatchObject({
+      currency: 'MYR',
+      travellers: 2,
+      wholeTripTotal: { amount: '2013.00', currency: 'MYR' },
+      estimatedPerPersonTotal: { amount: '1006.50', currency: 'MYR' },
+      flights: {
+        amount: { amount: '450.00', currency: 'MYR' },
+        basis: 'whole_party',
+        status: 'mock_estimate',
+      },
+      attractions: {
+        amount: { amount: '40.00', currency: 'MYR' },
+        basis: 'per_person',
+        status: 'mock_estimate',
+      },
     })
     expect(summary.missingData).toContain('Unknown verified ticket price for Mystery Museum.')
   })
@@ -163,6 +196,10 @@ describe('TripBudgetService', () => {
 
     expect(summary.flight.status).toBe('UNKNOWN')
     expect(summary.accommodation.status).toBe('UNKNOWN')
+    expect(summary.costSummary?.wholeTripTotal).toBeNull()
+    expect(summary.costSummary?.flights.amount).toBeNull()
+    expect(summary.costSummary?.hotel.amount).toBeNull()
+    expect(summary.costSummary?.attractions.amount).toBeNull()
     expect(summary.missingData).toEqual(
       expect.arrayContaining(['No selected flight offer.', 'No selected hotel offer.'])
     )

@@ -1,4 +1,10 @@
-import { GoogleGenAI, type GenerateContentParameters, type GenerateContentResponse } from '@google/genai'
+import {
+  GoogleGenAI,
+  Type,
+  type GenerateContentParameters,
+  type GenerateContentResponse,
+  type Schema,
+} from '@google/genai'
 import { z } from 'zod'
 
 import { buildItineraryPrompt } from '@/ai/prompts/itineraryPrompt'
@@ -10,7 +16,7 @@ import type {
 } from '@/ai/types'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
-const DEFAULT_MAX_RETRIES = 1
+const DEFAULT_MAX_RETRIES = 2
 const DEFAULT_RETRY_BASE_DELAY_MS = 750
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_800
 const DEFAULT_THINKING_BUDGET = 0
@@ -100,34 +106,43 @@ const richItinerarySchema = z.object({
   ),
 })
 
-const compactItinerarySchema = z.object({
-  items: z.array(
-    z.object({
-      candidateId: z.string().min(1),
-      day: z.number().int().positive(),
-      startTime: z.string().regex(TIME_PATTERN),
-      durationMinutes: z.number().int().min(15).max(720),
-      reason: z.string().min(1).max(160),
-    }).strict()
-  ).min(1),
-}).strict()
+const compactItinerarySchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            candidateId: z.string().min(1),
+            day: z.number().int().positive(),
+            startTime: z.string().regex(TIME_PATTERN),
+            durationMinutes: z.number().int().min(15).max(720),
+            reason: z.string().min(1).max(160),
+          })
+          .strict()
+      )
+      .min(1),
+  })
+  .strict()
 
-const COMPACT_RESPONSE_JSON_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
+const COMPACT_RESPONSE_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  propertyOrdering: ['items'],
   properties: {
     items: {
-      type: 'array',
-      minItems: 1,
+      type: Type.ARRAY,
+      minItems: '1',
       items: {
-        type: 'object',
-        additionalProperties: false,
+        type: Type.OBJECT,
+        propertyOrdering: ['candidateId', 'day', 'startTime', 'durationMinutes', 'reason'],
         properties: {
-          candidateId: { type: 'string' },
-          day: { type: 'integer', minimum: 1 },
-          startTime: { type: 'string', pattern: '^([01]\\\\d|2[0-3]):[0-5]\\\\d$' },
-          durationMinutes: { type: 'integer', minimum: 15, maximum: 720 },
-          reason: { type: 'string', minLength: 1, maxLength: 160 },
+          candidateId: {
+            type: Type.STRING,
+            description: 'Exact candidateId copied from the supplied destination candidates.',
+          },
+          day: { type: Type.INTEGER },
+          startTime: { type: Type.STRING },
+          durationMinutes: { type: Type.INTEGER },
+          reason: { type: Type.STRING },
         },
         required: ['candidateId', 'day', 'startTime', 'durationMinutes', 'reason'],
       },
@@ -136,29 +151,25 @@ const COMPACT_RESPONSE_JSON_SCHEMA = {
   required: ['items'],
 }
 
-function compactResponseJsonSchema(options: {
+function compactResponseSchema(options: {
   allowedCandidateIds?: string[]
   durationDays?: number
-}) {
-  const candidateIdSchema =
-    options.allowedCandidateIds && options.allowedCandidateIds.length > 0
-      ? { type: 'string', enum: options.allowedCandidateIds }
-      : { type: 'string' }
-
+}): Schema {
   return {
-    ...COMPACT_RESPONSE_JSON_SCHEMA,
+    ...COMPACT_RESPONSE_SCHEMA,
     properties: {
       items: {
-        ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items,
-        maxItems: options.allowedCandidateIds?.length,
+        ...COMPACT_RESPONSE_SCHEMA.properties?.items,
         items: {
-          ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items.items,
+          ...COMPACT_RESPONSE_SCHEMA.properties?.items?.items,
           properties: {
-            ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items.items.properties,
-            candidateId: candidateIdSchema,
-            day: {
-              ...COMPACT_RESPONSE_JSON_SCHEMA.properties.items.items.properties.day,
-              maximum: options.durationDays,
+            ...COMPACT_RESPONSE_SCHEMA.properties?.items?.items?.properties,
+            candidateId: {
+              type: Type.STRING,
+              description:
+                options.allowedCandidateIds && options.allowedCandidateIds.length > 0
+                  ? `Exact candidateId copied from one of the ${options.allowedCandidateIds.length} supplied destination candidates.`
+                  : 'Exact candidateId copied from the supplied destination candidates.',
             },
           },
         },
@@ -169,7 +180,9 @@ function compactResponseJsonSchema(options: {
 
 interface GeminiClient {
   models: {
-    generateContent(params: GenerateContentParameters): Promise<Pick<GenerateContentResponse, 'text'>>
+    generateContent(
+      params: GenerateContentParameters
+    ): Promise<Pick<GenerateContentResponse, 'text'>>
   }
 }
 
@@ -178,6 +191,14 @@ interface GeminiLogMeta {
   model: string
   responseTimeMs: number
   errorType?: string
+  status?: number
+  attempt?: number
+  maxAttempts?: number
+  retryCount?: number
+  requestTimeoutMs?: number
+  promptChars?: number
+  responseReceived?: boolean
+  providerMessage?: string
 }
 
 interface GeminiLogger {
@@ -204,11 +225,26 @@ export class GeminiProviderError extends Error {
   constructor(
     message: string,
     public readonly code: AIErrorCategory = 'AI_UNKNOWN_FAILURE',
-    public readonly retryAfterMs?: number
+    public readonly retryAfterMs?: number,
+    public readonly diagnostics?: GeminiProviderDiagnostics
   ) {
     super(message)
     this.name = 'GeminiProviderError'
   }
+}
+
+export interface GeminiProviderDiagnostics {
+  provider: typeof PROVIDER
+  model?: string
+  status?: number
+  errorCategory: AIErrorCategory
+  requestTimeoutMs?: number
+  retryCount?: number
+  maxAttempts?: number
+  promptChars?: number
+  responseReceived: boolean
+  responseParsingState: 'not_started' | 'received_text' | 'parsed' | 'schema_failed'
+  providerMessage?: string
 }
 
 function getErrorStatus(error: unknown): number | undefined {
@@ -221,6 +257,23 @@ function getErrorStatus(error: unknown): number | undefined {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function safeProviderErrorMessage(error: unknown): string | undefined {
+  const raw = getErrorMessage(error)
+  if (!raw) return undefined
+
+  let message = raw
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: unknown; status?: unknown } }
+    if (typeof parsed.error?.message === 'string') {
+      message = parsed.error.message
+    }
+  } catch {
+    // The SDK may throw plain Error/TypeError instances; keep their message.
+  }
+
+  return message.replace(/\s+/g, ' ').trim().slice(0, 1_000)
 }
 
 function getRetryAfterMs(error: unknown): number | undefined {
@@ -241,55 +294,189 @@ function getRetryAfterMs(error: unknown): number | undefined {
       : headers && typeof headers === 'object'
         ? ((headers as Record<string, unknown>)['retry-after'] as string | undefined)
         : undefined
-  if (!raw) return undefined
+  if (!raw) return getRetryAfterMsFromProviderMessage(error)
 
   const seconds = Number(raw)
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
 
   const dateMs = Date.parse(raw)
-  return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : undefined
+  return Number.isFinite(dateMs)
+    ? Math.max(0, dateMs - Date.now())
+    : getRetryAfterMsFromProviderMessage(error)
+}
+
+function retryDelayTextToMs(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const secondsMatch = value.match(/^(\d+(?:\.\d+)?)s$/)
+  if (secondsMatch) return Math.max(0, Math.round(Number(secondsMatch[1]) * 1000))
+  const retryInMatch = value.match(/retry in (\d+(?:\.\d+)?)s/i)
+  if (retryInMatch) return Math.max(0, Math.round(Number(retryInMatch[1]) * 1000))
+  return undefined
+}
+
+function getRetryAfterMsFromProviderMessage(error: unknown): number | undefined {
+  const raw = getErrorMessage(error)
+  const directDelay = retryDelayTextToMs(raw)
+  if (directDelay != null) return directDelay
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: {
+        message?: unknown
+        details?: Array<Record<string, unknown>>
+      }
+    }
+    const messageDelay = retryDelayTextToMs(parsed.error?.message)
+    if (messageDelay != null) return messageDelay
+
+    for (const detail of parsed.error?.details ?? []) {
+      const retryDelay = retryDelayTextToMs(detail.retryDelay)
+      if (retryDelay != null) return retryDelay
+    }
+  } catch {
+    return undefined
+  }
+
+  return undefined
 }
 
 function isTransientError(error: unknown): boolean {
+  if (error instanceof GeminiProviderError) {
+    return [
+      'AI_TIMEOUT',
+      'AI_RATE_LIMITED',
+      'AI_QUOTA_EXCEEDED',
+      'AI_TEMPORARY_FAILURE',
+      'AI_NETWORK_FAILURE',
+      'AI_MODEL_UNAVAILABLE',
+    ].includes(error.code)
+  }
   const status = getErrorStatus(error)
   if (status === 408 || status === 409 || status === 429 || (status && status >= 500)) return true
 
   const message = getErrorMessage(error).toLowerCase()
-  return message.includes('timeout') || message.includes('temporarily') || message.includes('rate')
+  return (
+    message.includes('timeout') ||
+    message.includes('temporarily') ||
+    message.includes('rate') ||
+    message.includes('fetch failed') ||
+    message.includes('network') ||
+    message.includes('econnreset') ||
+    message.includes('enotfound')
+  )
 }
 
-function toFriendlyError(error: unknown): GeminiProviderError {
+function looksLikeSchemaRequestFailure(status: number | undefined, message: string): boolean {
+  return Boolean(
+    status === 400 &&
+      (message.includes('schema') ||
+        message.includes('responsejsonschema') ||
+        message.includes('response schema') ||
+        message.includes('invalid argument'))
+  )
+}
+
+function looksLikeModelUnavailable(status: number | undefined, message: string): boolean {
+  return Boolean(
+    status === 404 ||
+      status === 503 ||
+      message.includes('model not found') ||
+      message.includes('not found for api version') ||
+      message.includes('model is unavailable') ||
+      message.includes('model unavailable')
+  )
+}
+
+function looksLikeNetworkFailure(status: number | undefined, message: string): boolean {
+  return Boolean(
+    !status &&
+      (message.includes('fetch failed') ||
+        message.includes('network') ||
+        message.includes('econnreset') ||
+        message.includes('enotfound') ||
+        message.includes('socket') ||
+        message.includes('tls'))
+  )
+}
+
+function toFriendlyError(
+  error: unknown,
+  diagnostics?: Omit<GeminiProviderDiagnostics, 'errorCategory'>
+): GeminiProviderError {
   if (error instanceof GeminiProviderError) return error
 
   const status = getErrorStatus(error)
   const message = getErrorMessage(error).toLowerCase()
   const retryAfterMs = getRetryAfterMs(error)
+  const providerMessage = safeProviderErrorMessage(error)
+  const withDiagnostics = (
+    friendlyMessage: string,
+    code: AIErrorCategory,
+    retryMs: number | undefined = retryAfterMs
+  ) =>
+    new GeminiProviderError(friendlyMessage, code, retryMs, {
+      ...(diagnostics ?? {
+        provider: PROVIDER,
+        responseReceived: false,
+        responseParsingState: 'not_started' as const,
+      }),
+      status,
+      errorCategory: code,
+      providerMessage,
+    })
 
   if (status === 401 || status === 403 || message.includes('api key')) {
-    return new GeminiProviderError('Gemini API key is invalid or unauthorized.', 'AI_AUTHENTICATION_FAILED')
+    return withDiagnostics(
+      'Gemini API key is invalid, missing, or unauthorized.',
+      'AI_AUTHENTICATION_FAILURE'
+    )
   }
 
   if (status === 429 || message.includes('quota') || message.includes('rate')) {
-    return new GeminiProviderError(
-      'Gemini quota or rate limit exceeded. Please try again later.',
-      'AI_RATE_LIMITED',
-      retryAfterMs
+    if (message.includes('quota')) {
+      return withDiagnostics('Gemini quota exceeded. Please try again later.', 'AI_QUOTA_EXCEEDED')
+    }
+    return withDiagnostics('Gemini rate limit exceeded. Please try again later.', 'AI_RATE_LIMITED')
+  }
+
+  if (
+    status === 408 ||
+    status === 504 ||
+    message.includes('timeout') ||
+    message.includes('aborted')
+  ) {
+    return withDiagnostics('Gemini request timed out. Please try again.', 'AI_TIMEOUT')
+  }
+
+  if (looksLikeSchemaRequestFailure(status, message)) {
+    return withDiagnostics(
+      'Gemini rejected the requested response schema.',
+      'AI_SCHEMA_VALIDATION_FAILURE'
     )
   }
 
-  if (status === 408 || status === 504 || message.includes('timeout') || message.includes('aborted')) {
-    return new GeminiProviderError('Gemini request timed out. Please try again.', 'AI_TIMEOUT', retryAfterMs)
+  if (looksLikeModelUnavailable(status, message)) {
+    return withDiagnostics('Gemini model is unavailable for this request.', 'AI_MODEL_UNAVAILABLE')
+  }
+
+  if (looksLikeNetworkFailure(status, message)) {
+    return withDiagnostics(
+      'Gemini network request failed before a response was received.',
+      'AI_NETWORK_FAILURE'
+    )
   }
 
   if (status && status >= 500) {
-    return new GeminiProviderError(
+    return withDiagnostics(
       'Gemini service is temporarily unavailable. Please try again.',
-      'AI_TEMPORARY_FAILURE',
-      retryAfterMs
+      'AI_TEMPORARY_FAILURE'
     )
   }
 
-  return new GeminiProviderError('Gemini failed to generate a response. Please try again.', 'AI_UNKNOWN_FAILURE')
+  return withDiagnostics(
+    'Gemini failed to generate a response. Please try again.',
+    'AI_UNKNOWN_FAILURE'
+  )
 }
 
 function timeBucket(startTime: string): 'morning' | 'afternoon' | 'evening' {
@@ -311,7 +498,9 @@ function roundMoney(value: number): number {
   return Math.round(value * 100) / 100
 }
 
-function compactCandidateCost(candidate: NonNullable<GenerateItineraryRequest['destinationContext']>['candidates'][number]): {
+function compactCandidateCost(
+  candidate: NonNullable<GenerateItineraryRequest['destinationContext']>['candidates'][number]
+): {
   amount: number
   confidence: 'KNOWN_PRICE' | 'ESTIMATED_PRICE' | 'PRICE_UNKNOWN'
 } {
@@ -321,7 +510,8 @@ function compactCandidateCost(candidate: NonNullable<GenerateItineraryRequest['d
   }
   if (price.priceType === 'FREE') return { amount: 0, confidence: 'KNOWN_PRICE' }
   if (typeof price.amount === 'number') return { amount: price.amount, confidence: 'KNOWN_PRICE' }
-  if (typeof price.minAmount === 'number') return { amount: price.minAmount, confidence: 'KNOWN_PRICE' }
+  if (typeof price.minAmount === 'number')
+    return { amount: price.minAmount, confidence: 'KNOWN_PRICE' }
   return { amount: 0, confidence: 'PRICE_UNKNOWN' }
 }
 
@@ -331,7 +521,10 @@ function expandCompactItinerary(
 ): GenerateItineraryResponse {
   const context = request.destinationContext
   if (!context) {
-    throw new GeminiProviderError('Gemini returned compact itinerary JSON without destination context.', 'AI_INVALID_RESPONSE')
+    throw new GeminiProviderError(
+      'Gemini returned compact itinerary JSON without destination context.',
+      'AI_INVALID_RESPONSE'
+    )
   }
 
   const candidates = new Map(context.candidates.map((candidate) => [candidate.id, candidate]))
@@ -360,7 +553,9 @@ function expandCompactItinerary(
     }
     if (!days[item.day - 1]) days.push(day)
 
-    const cost = candidate ? compactCandidateCost(candidate) : { amount: 0, confidence: 'PRICE_UNKNOWN' as const }
+    const cost = candidate
+      ? compactCandidateCost(candidate)
+      : { amount: 0, confidence: 'PRICE_UNKNOWN' as const }
     const localAmount = roundMoney(cost.amount)
     const userAmount = roundMoney(localAmount * request.exchangeRate)
     const bucket = timeBucket(item.startTime)
@@ -387,8 +582,12 @@ function expandCompactItinerary(
     day.dailyTotalUserCurrency = roundMoney(day.dailyTotalUserCurrency + userAmount)
   }
 
-  const estimatedTotalLocal = roundMoney(days.reduce((total, day) => total + day.dailyTotalLocal, 0))
-  const estimatedTotalUserCurrency = roundMoney(days.reduce((total, day) => total + day.dailyTotalUserCurrency, 0))
+  const estimatedTotalLocal = roundMoney(
+    days.reduce((total, day) => total + day.dailyTotalLocal, 0)
+  )
+  const estimatedTotalUserCurrency = roundMoney(
+    days.reduce((total, day) => total + day.dailyTotalUserCurrency, 0)
+  )
   const totalBudgetUserCurrency = request.budgetSummary
     ? Number(request.budgetSummary.total.userBudget?.amount ?? request.budget)
     : request.budget
@@ -432,12 +631,18 @@ function expandCompactItinerary(
   }
 }
 
-function parseItineraryJson(rawText: string, request: GenerateItineraryRequest): GenerateItineraryResponse {
+function parseItineraryJson(
+  rawText: string,
+  request: GenerateItineraryRequest
+): GenerateItineraryResponse {
   let parsed: unknown
   try {
     parsed = JSON.parse(rawText)
   } catch {
-    throw new GeminiProviderError('Gemini returned malformed itinerary JSON.', 'AI_INVALID_RESPONSE')
+    throw new GeminiProviderError(
+      'Gemini returned malformed itinerary JSON.',
+      'AI_INVALID_RESPONSE'
+    )
   }
 
   const compactResult = compactItinerarySchema.safeParse(parsed)
@@ -453,7 +658,7 @@ function parseItineraryJson(rawText: string, request: GenerateItineraryRequest):
       .join('; ')
     throw new GeminiProviderError(
       `Gemini returned itinerary JSON with missing or invalid fields. ${issues}`,
-      'AI_INVALID_RESPONSE'
+      'AI_SCHEMA_VALIDATION_FAILURE'
     )
   }
 
@@ -475,12 +680,28 @@ export class GeminiProvider implements AIProvider {
   constructor(options: GeminiProviderOptions = {}) {
     const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY
     if (!apiKey && !options.client) {
-      throw new GeminiProviderError('Gemini API key is missing.')
+      throw new GeminiProviderError(
+        'Gemini API key is missing.',
+        'AI_AUTHENTICATION_FAILURE',
+        undefined,
+        {
+          provider: PROVIDER,
+          model: options.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL,
+          errorCategory: 'AI_AUTHENTICATION_FAILURE',
+          responseReceived: false,
+          responseParsingState: 'not_started',
+        }
+      )
     }
 
     const model = options.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL
     if (!model) {
-      throw new GeminiProviderError('Gemini model is missing.')
+      throw new GeminiProviderError('Gemini model is missing.', 'AI_MODEL_UNAVAILABLE', undefined, {
+        provider: PROVIDER,
+        errorCategory: 'AI_MODEL_UNAVAILABLE',
+        responseReceived: false,
+        responseParsingState: 'not_started',
+      })
     }
 
     this.model = model
@@ -488,21 +709,25 @@ export class GeminiProvider implements AIProvider {
     this.logger = options.logger ?? console
     this.requestTimeoutMs = Math.min(
       MAX_REQUEST_TIMEOUT_MS,
-      options.requestTimeoutMs ?? readPositiveInteger(process.env.GEMINI_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)
+      options.requestTimeoutMs ??
+        readPositiveInteger(process.env.GEMINI_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)
     )
     this.maxRetries = Math.min(
-      1,
-      options.maxRetries ?? readPositiveInteger(process.env.GEMINI_MAX_RETRIES, DEFAULT_MAX_RETRIES)
+      2,
+      options.maxRetries ??
+        readNonNegativeInteger(process.env.GEMINI_MAX_RETRIES, DEFAULT_MAX_RETRIES)
     )
     this.retryBaseDelayMs =
       options.retryBaseDelayMs ??
       readPositiveInteger(process.env.GEMINI_RETRY_BASE_DELAY_MS, DEFAULT_RETRY_BASE_DELAY_MS)
     this.maxOutputTokens = Math.min(
       MAX_OUTPUT_TOKENS,
-      options.maxOutputTokens ?? readPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+      options.maxOutputTokens ??
+        readPositiveInteger(process.env.GEMINI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
     )
     this.thinkingBudget =
-      options.thinkingBudget ?? readInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_THINKING_BUDGET)
+      options.thinkingBudget ??
+      readInteger(process.env.GEMINI_THINKING_BUDGET, DEFAULT_THINKING_BUDGET)
     this.delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.random = options.random ?? Math.random
   }
@@ -512,7 +737,10 @@ export class GeminiProvider implements AIProvider {
     return this.readText(response)
   }
 
-  async generateJson(prompt: string, responseJsonSchema: object = COMPACT_RESPONSE_JSON_SCHEMA): Promise<string> {
+  async generateJson(
+    prompt: string,
+    responseSchema: Schema = COMPACT_RESPONSE_SCHEMA
+  ): Promise<string> {
     const jsonPrompt = [
       prompt,
       '',
@@ -522,25 +750,46 @@ export class GeminiProvider implements AIProvider {
       'Do not include code fences.',
     ].join('\n')
 
-    const response = await this.sendPrompt(jsonPrompt, true, responseJsonSchema)
+    const response = await this.sendPrompt(jsonPrompt, true, responseSchema)
     return this.readText(response)
   }
 
   async generateItinerary(request: GenerateItineraryRequest): Promise<GenerateItineraryResponse> {
+    const prompt = buildItineraryPrompt(request)
     const rawText = await this.generateJson(
-      buildItineraryPrompt(request),
-      compactResponseJsonSchema({
-        allowedCandidateIds: request.destinationContext?.candidates.map((candidate) => candidate.id),
+      prompt,
+      compactResponseSchema({
+        allowedCandidateIds: request.destinationContext?.candidates.map(
+          (candidate) => candidate.id
+        ),
         durationDays: request.durationDays,
       })
     )
-    return parseItineraryJson(rawText, request)
+    try {
+      return parseItineraryJson(rawText, request)
+    } catch (error) {
+      if (error instanceof GeminiProviderError && !error.diagnostics) {
+        throw new GeminiProviderError(error.message, error.code, error.retryAfterMs, {
+          provider: PROVIDER,
+          model: this.model,
+          errorCategory: error.code,
+          requestTimeoutMs: this.requestTimeoutMs,
+          retryCount: 0,
+          maxAttempts: this.maxRetries + 1,
+          promptChars: prompt.length,
+          responseReceived: true,
+          responseParsingState:
+            error.code === 'AI_SCHEMA_VALIDATION_FAILURE' ? 'schema_failed' : 'received_text',
+        })
+      }
+      throw error
+    }
   }
 
   private async sendPrompt(
     prompt: string,
     jsonResponse: boolean,
-    responseJsonSchema: object = COMPACT_RESPONSE_JSON_SCHEMA
+    responseSchema: Schema = COMPACT_RESPONSE_SCHEMA
   ): Promise<Pick<GenerateContentResponse, 'text'>> {
     const startedAt = Date.now()
     const params: GenerateContentParameters = {
@@ -557,7 +806,7 @@ export class GeminiProvider implements AIProvider {
         ...(jsonResponse
           ? {
               responseMimeType: 'application/json',
-              responseJsonSchema,
+              responseSchema,
             }
           : {}),
       },
@@ -570,18 +819,43 @@ export class GeminiProvider implements AIProvider {
           provider: PROVIDER,
           model: this.model,
           responseTimeMs: Date.now() - startedAt,
+          attempt: attempt + 1,
+          maxAttempts: this.maxRetries + 1,
+          retryCount: attempt,
+          requestTimeoutMs: this.requestTimeoutMs,
+          promptChars: prompt.length,
+          responseReceived: true,
         })
         return response
       } catch (error) {
-        const friendlyError = toFriendlyError(error)
+        const friendlyError = toFriendlyError(error, {
+          provider: PROVIDER,
+          model: this.model,
+          status: getErrorStatus(error),
+          requestTimeoutMs: this.requestTimeoutMs,
+          retryCount: attempt,
+          maxAttempts: this.maxRetries + 1,
+          promptChars: prompt.length,
+          responseReceived: false,
+          responseParsingState: 'not_started',
+        })
         if (attempt < this.maxRetries && isTransientError(error)) {
           this.logger.warn('AI provider retrying transient failure', {
             provider: PROVIDER,
             model: this.model,
             responseTimeMs: Date.now() - startedAt,
             errorType: friendlyError.code,
+            status: getErrorStatus(error),
+            attempt: attempt + 1,
+            maxAttempts: this.maxRetries + 1,
+            retryCount: attempt,
+            requestTimeoutMs: this.requestTimeoutMs,
+            promptChars: prompt.length,
+            responseReceived: false,
           })
-          await this.delay(retryDelayMs(attempt, this.retryBaseDelayMs, this.random, friendlyError.retryAfterMs))
+          await this.delay(
+            retryDelayMs(attempt, this.retryBaseDelayMs, this.random, friendlyError.retryAfterMs)
+          )
           continue
         }
 
@@ -590,12 +864,22 @@ export class GeminiProvider implements AIProvider {
           model: this.model,
           responseTimeMs: Date.now() - startedAt,
           errorType: friendlyError.code,
+          status: getErrorStatus(error),
+          attempt: attempt + 1,
+          maxAttempts: this.maxRetries + 1,
+          retryCount: attempt,
+          requestTimeoutMs: this.requestTimeoutMs,
+          promptChars: prompt.length,
+          responseReceived: false,
         })
         throw friendlyError
       }
     }
 
-    throw new GeminiProviderError('Gemini failed to generate a response. Please try again.', 'AI_UNKNOWN_FAILURE')
+    throw new GeminiProviderError(
+      'Gemini failed to generate a response. Please try again.',
+      'AI_UNKNOWN_FAILURE'
+    )
   }
 
   private readText(response: Pick<GenerateContentResponse, 'text'>): string {
@@ -612,6 +896,12 @@ function readPositiveInteger(value: string | undefined, fallback: number): numbe
   if (!value) return fallback
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function readNonNegativeInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 function readInteger(value: string | undefined, fallback: number): number {

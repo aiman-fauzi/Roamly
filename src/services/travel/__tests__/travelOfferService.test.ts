@@ -8,7 +8,7 @@ import type { FlightSearchRequest, HotelSearchRequest } from '@/services/travel/
 
 const flightRequest: FlightSearchRequest = {
   originAirportCode: 'KUL',
-  destinationAirportCode: 'KIX',
+  destinationAirportCode: 'PQC',
   departureDate: '2026-09-01',
   returnDate: '2026-09-05',
   adults: 2,
@@ -33,18 +33,38 @@ describe('travel offer providers and cache', () => {
     const hotels = await new MockHotelOfferProvider().searchHotels(hotelRequest)
 
     expect(flights.status).toBe('SUCCESS')
-    expect(flights.offers).toHaveLength(2)
-    expect(flights.offers.map((offer) => offer.refundable)).toEqual([false, true])
+    expect(flights.offers).toHaveLength(9)
+    expect(flights.offers.filter((offer) => offer.refundable)).toHaveLength(1)
     expect(flights.offers[0]).toMatchObject({
-      totalPrice: { amount: '840.00', currency: 'MYR' },
-      taxes: { amount: '151.20', currency: 'MYR' },
+      totalPrice: { currency: 'MYR' },
+      taxes: { currency: 'MYR' },
       expiresAt: '2026-08-05T00:15:00.000Z',
+      dataStatus: 'mock',
+      availabilityStatus: 'simulated',
     })
+    const firstFlightPair = flights.offers[0].mockFlightPair
+    expect(firstFlightPair).toBeDefined()
+    expect(flights.offers[0].totalPrice.amount).toBe(
+      (
+        firstFlightPair!.outbound.fare.totalAmount + firstFlightPair!.return.fare.totalAmount
+      ).toFixed(2)
+    )
+    expect(flights.offers[0].taxes).toBeDefined()
+    expect(flights.offers[0].taxes!.amount).toBe(
+      (
+        firstFlightPair!.outbound.fare.taxesAmount + firstFlightPair!.return.fare.taxesAmount
+      ).toFixed(2)
+    )
 
     expect(hotels.status).toBe('SUCCESS')
-    expect(hotels.offers).toHaveLength(2)
-    expect(hotels.offers.map((offer) => offer.refundable)).toEqual([false, true])
-    expect(hotels.offers[0].totalPrice).toEqual({ amount: '720.00', currency: 'MYR' })
+    expect(hotels.offers).toHaveLength(4)
+    expect(hotels.offers.map((offer) => offer.refundable)).toEqual([true, true, false, true])
+    expect(hotels.offers[0]).toMatchObject({
+      propertyName: 'Duong Dong Central Hotel',
+      totalPrice: { amount: '582.00', currency: 'MYR' },
+      dataStatus: 'mock',
+      availabilityStatus: 'simulated',
+    })
   })
 
   it('supports deterministic no-results, rate-limit, and temporary-failure modes', async () => {
@@ -145,12 +165,15 @@ describe('travel offer providers and cache', () => {
     const flights = await new MockFlightOfferProvider().searchFlights(flightRequest)
     const hotels = await new MockHotelOfferProvider().searchHotels(hotelRequest)
 
-    expect(rankFlightOffers(flights.offers, 'CHEAPEST')[0].id).toContain('connect')
+    const rankedFlights = rankFlightOffers(flights.offers, 'CHEAPEST')
+    const cheapestAmount = Math.min(...flights.offers.map((offer) => Number(offer.totalPrice.amount)))
+    expect(Number(rankedFlights[0].totalPrice.amount)).toBe(cheapestAmount)
+    expect(rankedFlights[0].rankReasons).toContain('cheapest')
     expect(
       rankHotelOffers(hotels.offers, 'NEAREST_TO_ITINERARY', {
-        latitude: 3.151,
-        longitude: 101.708,
+        latitude: 10.2169,
+        longitude: 103.9592,
       })[0].propertyName
-    ).toBe('Mock Flexible Suites')
+    ).toBe('Duong Dong Central Hotel')
   })
 })
