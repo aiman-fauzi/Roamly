@@ -5,13 +5,15 @@ import {
   DestinationFactType,
   DestinationImportSource,
 } from '@prisma/client'
-import { describe, expect, it } from 'vitest'
+import type { PrismaClient } from '@prisma/client'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   DestinationRetrievalService,
   applyCandidateDiversityControls,
   filterEligibleDestinationCandidates,
   rankDestinationCandidates,
+  resolveDestinationCity,
 } from '@/services/destinations/destinationRetrievalService'
 import { destinationFactKey } from '@/services/destinations/facts/destinationFactService'
 import {
@@ -88,6 +90,31 @@ function ranked(overrides: Partial<RankedDestinationCandidate>): RankedDestinati
 }
 
 describe('destination retrieval helpers', () => {
+  it('resolves a city when the destination includes a country suffix', async () => {
+    const findFirst = vi.fn().mockResolvedValue({
+      id: 'city-phu-quoc',
+      name: 'Phu Quoc',
+      slug: 'phu-quoc',
+      country: { name: 'Vietnam', slug: 'vietnam', currencyCode: 'VND' },
+    })
+
+    await expect(
+      resolveDestinationCity('Phu Quoc, Vietnam', {
+        city: { findFirst },
+      } as unknown as PrismaClient)
+    ).resolves.toMatchObject({ id: 'city-phu-quoc', slug: 'phu-quoc' })
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            { slug: 'phu-quoc' },
+            { name: { equals: 'Phu Quoc', mode: 'insensitive' } },
+          ]),
+        }),
+      })
+    )
+  })
+
   it('maps imported attraction categories into retrieval taxonomy without collapsing to museum', () => {
     expect(retrievalCategoriesForDestination({ sourceCategories: ['place-of-worship'] })).toEqual([
       'religious',

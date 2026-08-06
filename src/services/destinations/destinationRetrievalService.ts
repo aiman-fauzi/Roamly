@@ -1442,14 +1442,19 @@ export async function resolveDestinationCity(
   destination: string,
   db: PrismaClient = prisma
 ): Promise<DestinationCityResolution | null> {
-  const normalized = slugify(destination)
+  const trimmedDestination = destination.trim()
+  const citySegment = trimmedDestination.split(',')[0]?.trim() || trimmedDestination
+  const normalized = slugify(trimmedDestination)
+  const normalizedCitySegment = slugify(citySegment)
   const city = await db.city.findFirst({
     where: {
       deletedAt: null,
       OR: [
         { slug: normalized },
-        { name: { equals: destination.trim(), mode: 'insensitive' } },
-        { name: { contains: destination.trim(), mode: 'insensitive' } },
+        { slug: normalizedCitySegment },
+        { name: { equals: trimmedDestination, mode: 'insensitive' } },
+        { name: { equals: citySegment, mode: 'insensitive' } },
+        { name: { contains: citySegment, mode: 'insensitive' } },
       ],
       country: { deletedAt: null },
     },
