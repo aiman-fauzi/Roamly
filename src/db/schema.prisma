@@ -565,6 +565,13 @@ model DestinationImage {
   altText      String?   @db.VarChar(255)
   caption      String?   @db.VarChar(255)
   attribution  String?   @db.VarChar(255)
+  sourceProvider String?  @db.VarChar(80)
+  sourceRecordId String?  @db.VarChar(255)
+  sourceUrl      String?
+  pageUrl        String?
+  author         String?  @db.VarChar(255)
+  licenseName    String?  @db.VarChar(120)
+  licenseUrl     String?
   sortOrder    Int       @default(0)
   isPrimary    Boolean   @default(false)
   deletedAt    DateTime?
@@ -587,6 +594,33 @@ model DestinationImage {
   @@index([isPrimary])
   @@index([deletedAt])
   @@map("destination_images")
+}
+
+model DestinationSourceProvenance {
+  id                String                    @id @default(uuid())
+  entityType        DestinationFactEntityType
+  entityId          String
+  sourceProvider    String                    @db.VarChar(80)
+  sourceRecordId    String                    @db.VarChar(255)
+  sourceUrl         String?
+  sourceLicenseName String?                   @db.VarChar(120)
+  sourceLicenseUrl  String?
+  attribution       String?
+  externalIds       Json?
+  rawPayload        Json?
+  importConfidence  Int?
+  duplicateStatus   String?                   @db.VarChar(40)
+  manuallyCurated   Boolean                   @default(false)
+  lastSourceSyncAt  DateTime?
+  sourceContentHash String?                   @db.VarChar(80)
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  @@unique([sourceProvider, sourceRecordId])
+  @@index([entityType, entityId])
+  @@index([sourceProvider])
+  @@index([lastSourceSyncAt])
+  @@map("destination_source_provenance")
 }
 
 model DestinationFact {
