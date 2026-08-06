@@ -25,6 +25,20 @@ Use a 10-minute rolling window and exclude expected `409` conflicts from the gen
 | Destination retrieval failures | 2% | 5% |
 | Concurrency conflicts | report separately at 5%; investigate at 15% |
 
+## Recommended alert rules
+
+Start with these low-noise production alerts and tune them once Roamly has sustained traffic:
+
+- p95 travel restore latency above 4 seconds.
+- p95 planning preview latency above 6 seconds.
+- Unexpected HTTP 500 rate above 2%.
+- Gemini quota fallback rate above 20%.
+- Authentication provider failure rate above 1%.
+- Destination retrieval failure rate above 2%.
+- Cache hit rate below 30% during sustained traffic.
+
+Treat concurrency conflicts as a separate product signal rather than server failures.
+
 ## Vercel setup
 
 Vercel Functions already capture `console.info` JSONL. For the no-cost baseline, use Runtime Logs filters for `"event":"roamly_operation"`, operation, status, errorCode, region, and runtimeState. Configure alerts in the connected log provider if a log drain is already available; otherwise use Vercel log search during incidents and export JSONL for a release review. Never enable full request-body logging.
