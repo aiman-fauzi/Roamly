@@ -57,13 +57,12 @@ export async function ensureProfile(
   avatarUrl: string | null,
   email?: string
 ): Promise<Profile> {
-  const existing = await prisma.profile.findUnique({ where: { userId } })
-  if (existing) return existing
-
   const name = displayName ?? (email ? extractEmailPrefix(email) : 'Traveller')
 
-  return prisma.profile.create({
-    data: {
+  return prisma.profile.upsert({
+    where: { userId },
+    update: {},
+    create: {
       userId,
       displayName: name,
       avatarUrl,

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  profileCreate: vi.fn(),
   profileFindUnique: vi.fn(),
+  profileUpsert: vi.fn(),
   profileUpdate: vi.fn(),
   tripCount: vi.fn(),
   userFindUnique: vi.fn(),
@@ -11,8 +11,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/db/client', () => ({
   prisma: {
     profile: {
-      create: mocks.profileCreate,
       findUnique: mocks.profileFindUnique,
+      upsert: mocks.profileUpsert,
       update: mocks.profileUpdate,
     },
     trip: {
@@ -25,6 +25,7 @@ vi.mock('@/db/client', () => ({
 }))
 
 import {
+  ensureProfile,
   getProfileSummary,
   updateProfileDetails,
 } from '@/services/profileService'
@@ -32,6 +33,25 @@ import {
 describe('profileService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('initializes a profile with an atomic upsert', async () => {
+    const profile = { id: 'profile-id', userId: 'user-id' }
+    mocks.profileUpsert.mockResolvedValue(profile)
+
+    await expect(
+      ensureProfile('user-id', null, null, 'smoke.user@example.com')
+    ).resolves.toEqual(profile)
+    expect(mocks.profileUpsert).toHaveBeenCalledWith({
+      where: { userId: 'user-id' },
+      update: {},
+      create: {
+        userId: 'user-id',
+        displayName: 'smoke.user',
+        avatarUrl: null,
+        profileComplete: false,
+      },
+    })
   })
 
   it('updates profile details and marks complete when required fields are present', async () => {
