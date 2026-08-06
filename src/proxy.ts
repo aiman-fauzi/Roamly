@@ -9,11 +9,9 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/profile') ||
     pathname.startsWith('/trips')
 
-  const isProtectedApi = pathname.startsWith('/api/') && !pathname.startsWith('/api/auth/callback')
-
   const isAuthPage = pathname === '/login' || pathname === '/register'
 
-  if (!isProtectedPage && !isProtectedApi && !isAuthPage) {
+  if (!isProtectedPage && !isAuthPage) {
     return NextResponse.next({ request })
   }
 
@@ -21,7 +19,7 @@ export async function proxy(request: NextRequest) {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    if (isProtectedPage || isProtectedApi) {
+    if (isProtectedPage) {
       const loginUrl = new URL('/login', request.url)
       loginUrl.searchParams.set('next', pathname)
       return NextResponse.redirect(loginUrl)
@@ -52,7 +50,7 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if ((isProtectedPage || isProtectedApi) && !user) {
+  if (isProtectedPage && !user) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
     return NextResponse.redirect(loginUrl)
@@ -67,6 +65,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)|api/auth/callback).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp)|api/).*)',
   ],
 }
