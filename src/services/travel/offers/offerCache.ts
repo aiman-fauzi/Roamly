@@ -7,7 +7,7 @@ export interface OfferCacheEntry<T> {
 }
 
 export interface OfferCacheLookup<T> extends OfferCacheEntry<T> {
-  cacheStatus: 'HIT' | 'MISS' | 'REFRESHED'
+  cacheStatus: 'HIT' | 'MISS' | 'REFRESHED' | 'COALESCED'
 }
 
 export interface OfferCacheStore<T> {
@@ -105,7 +105,11 @@ export class InMemoryOfferCache<T> implements OfferCacheStore<T> {
 
     const pending = this.pending.get(key)
     if (pending && !options.refresh) {
-      return pending.promise.then((entry) => ({ ...entry, value: cloneValue(entry.value) }))
+      return pending.promise.then((entry) => ({
+        ...entry,
+        value: cloneValue(entry.value),
+        cacheStatus: 'COALESCED' as const,
+      }))
     }
 
     const promise = loader()

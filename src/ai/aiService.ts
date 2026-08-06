@@ -1,6 +1,7 @@
 import { GeminiProvider } from '@/ai/providers/GeminiProvider'
 import { GeminiProviderError } from '@/ai/providers/GeminiProvider'
 import type { AIProvider, GenerateItineraryRequest, GenerateItineraryResponse } from '@/ai/types'
+import { RequestTiming } from '@/lib/observability/requestTiming'
 
 type ProviderFactory = () => AIProvider
 
@@ -24,6 +25,12 @@ class FallbackItineraryAIProvider implements AIProvider {
       return await this.primary.generateItinerary(request)
     } catch (error) {
       if (!isFallbackEligible(error)) throw error
+      const providerError = error as GeminiProviderError
+      new RequestTiming('itinerary_provider_fallback', request.observabilityRequestId).finish({
+        status: 'fallback',
+        statusCode: 200,
+        errorCode: providerError.code,
+      })
       return this.fallback.generateItinerary(request)
     }
   }

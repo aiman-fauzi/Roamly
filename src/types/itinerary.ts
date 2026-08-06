@@ -29,6 +29,7 @@ export interface BudgetSummary {
 }
 
 export interface ItineraryItem {
+  itemId?: string
   candidateId: string
   time: string
   title: string
@@ -47,6 +48,21 @@ export interface ItineraryItem {
   priceConfidence: 'KNOWN_PRICE' | 'ESTIMATED_PRICE' | 'PRICE_UNKNOWN'
   sourceEntityType?: string
   sourceEntityId?: string
+  category?: string
+  area?: string
+  areaGroup?: string
+  locked?: boolean
+  editorNotes?: string
+  source?: 'generated' | 'manual' | 'fallback'
+  replacedFromCandidateId?: string
+  image?: {
+    url: string
+    altText?: string
+    attribution?: string
+    licenseName?: string
+    licenseUrl?: string
+    sourceUrl?: string
+  }
   tips: string[]
 }
 
@@ -59,6 +75,40 @@ export interface DayPlan {
   dailyTotalLocal: number
   dailyTotalUserCurrency: number
   notes: string[]
+}
+
+export type ItineraryPeriod = 'morning' | 'afternoon' | 'evening'
+
+export interface ItineraryMapPoint {
+  itemId: string
+  candidateId: string
+  dayNumber: number
+  orderIndex: number
+  title: string
+  latitude: number
+  longitude: number
+  category: string
+  areaGroup: string | null
+}
+
+export interface ItineraryEditorDocument {
+  itineraryId: string
+  version: number
+  itinerary: Itinerary
+  mapPoints: ItineraryMapPoint[]
+  dayDates: Record<number, string>
+  dayNotices: Record<number, string[]>
+}
+
+export interface ItineraryReplacementOption {
+  candidateId: string
+  name: string
+  category: string
+  area: string
+  reason: string
+  latitude: number
+  longitude: number
+  image?: ItineraryItem['image']
 }
 
 export interface RoadmapDay {

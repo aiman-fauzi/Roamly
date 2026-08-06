@@ -8,6 +8,7 @@ export interface Trip {
   title: string
   status: TripStatus
   itineraryJson: unknown | null
+  itineraryEditVersion?: number
   createdAt: Date
   updatedAt: Date
 }

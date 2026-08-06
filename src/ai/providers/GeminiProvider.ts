@@ -14,6 +14,7 @@ import type {
   GenerateItineraryRequest,
   GenerateItineraryResponse,
 } from '@/ai/types'
+import { RequestTiming } from '@/lib/observability/requestTiming'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_MAX_RETRIES = 2
@@ -755,19 +756,30 @@ export class GeminiProvider implements AIProvider {
   }
 
   async generateItinerary(request: GenerateItineraryRequest): Promise<GenerateItineraryResponse> {
+    const timing = new RequestTiming('gemini_invocation', request.observabilityRequestId)
     const prompt = buildItineraryPrompt(request)
-    const rawText = await this.generateJson(
-      prompt,
-      compactResponseSchema({
-        allowedCandidateIds: request.destinationContext?.candidates.map(
-          (candidate) => candidate.id
-        ),
-        durationDays: request.durationDays,
-      })
-    )
     try {
-      return parseItineraryJson(rawText, request)
+      const rawText = await this.generateJson(
+        prompt,
+        compactResponseSchema({
+          allowedCandidateIds: request.destinationContext?.candidates.map(
+            (candidate) => candidate.id
+          ),
+          durationDays: request.durationDays,
+        })
+      )
+      const itinerary = parseItineraryJson(rawText, request)
+      timing.finish({ statusCode: 200 })
+      return itinerary
     } catch (error) {
+      timing.finish({
+        statusCode:
+          error instanceof GeminiProviderError &&
+          (error.code === 'AI_RATE_LIMITED' || error.code === 'AI_QUOTA_EXCEEDED')
+            ? 429
+            : 500,
+        errorCode: error instanceof GeminiProviderError ? error.code : 'AI_INVALID_RESPONSE',
+      })
       if (error instanceof GeminiProviderError && !error.diagnostics) {
         throw new GeminiProviderError(error.message, error.code, error.retryAfterMs, {
           provider: PROVIDER,

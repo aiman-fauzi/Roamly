@@ -7,6 +7,7 @@ import type { DayPlan, Itinerary, ItineraryItem } from '@/types/itinerary'
 export type { DayPlan, ItineraryItem }
 
 export interface GenerateItineraryRequest {
+  observabilityRequestId?: string
   destination: string
   budget: number
   durationDays: number

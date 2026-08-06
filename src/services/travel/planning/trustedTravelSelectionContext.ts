@@ -218,6 +218,14 @@ export class TrustedTravelRequestScope {
       this.timing?.record('deterministic_hotel_generation', performance.now() - hotelStartedAt)
     })
     const [flightSearch, hotelSearch] = await Promise.all([flightPromise, hotelPromise])
+    const cacheStatuses = [flightSearch.cacheStatus, hotelSearch.cacheStatus]
+    if (cacheStatuses.includes('MISS') || cacheStatuses.includes('REFRESHED')) {
+      this.timing?.setCacheStatus('miss')
+    } else if (cacheStatuses.includes('COALESCED')) {
+      this.timing?.setCacheStatus('coalesced')
+    } else if (cacheStatuses.every((status) => status === 'HIT')) {
+      this.timing?.setCacheStatus('hit')
+    }
     if (flightSearch.status !== 'SUCCESS' || hotelSearch.status !== 'SUCCESS') {
       throw new TrustedTravelContextError(
         'TRAVEL_OFFERS_UNAVAILABLE',

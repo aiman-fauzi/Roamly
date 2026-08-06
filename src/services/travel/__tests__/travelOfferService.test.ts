@@ -146,8 +146,8 @@ describe('travel offer providers and cache', () => {
     release?.({ value: 42 })
 
     await expect(Promise.all([pendingOne, pendingTwo])).resolves.toEqual([
-      expect.objectContaining({ value: { value: 42 } }),
-      expect.objectContaining({ value: { value: 42 } }),
+      expect.objectContaining({ value: { value: 42 }, cacheStatus: 'MISS' }),
+      expect.objectContaining({ value: { value: 42 }, cacheStatus: 'COALESCED' }),
     ])
     expect(loads).toBe(3)
   })

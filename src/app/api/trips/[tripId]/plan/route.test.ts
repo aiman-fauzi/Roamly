@@ -154,6 +154,7 @@ describe('trip travel planning route', () => {
         currency: 'MYR',
         persist: true,
       }),
+      timing: expect.anything(),
     })
     expect(body.destinationContext).toEqual({
       eligibleCandidates: 1,
@@ -225,6 +226,7 @@ describe('trip travel planning route', () => {
         originAirportCode: 'KUL',
         persist: false,
       }),
+      timing: expect.anything(),
     })
     expect(body.itinerary).toBeNull()
     expect(body.itineraryStatus).toMatchObject({

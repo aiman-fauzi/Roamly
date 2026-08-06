@@ -3,10 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 
-import { DayCard } from '@/components/features/itinerary/DayCard'
-import { ItineraryHeader } from '@/components/features/itinerary/ItineraryHeader'
-import { ItineraryTimeline } from '@/components/features/itinerary/ItineraryTimeline'
-import { TravelContextSummary } from '@/components/features/travel/TravelContextSummary'
+import { ItineraryEditor } from '@/components/features/itinerary/ItineraryEditor'
 import { TravelPlanningWorkspace } from '@/components/features/travel/TravelPlanningWorkspace'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -169,17 +166,6 @@ export function ItineraryView({ tripId }: ItineraryViewProps) {
   }
 
   return (
-    <div className="space-y-8">
-      <ItineraryHeader itinerary={itinerary} destination={trip?.preferenceSet?.destination} />
-      {itinerary.itineraryTravelContext && (
-        <TravelContextSummary context={itinerary.itineraryTravelContext} />
-      )}
-      <ItineraryTimeline roadmap={itinerary.roadmap} />
-      <div className="space-y-5">
-        {itinerary.days.map((day) => (
-          <DayCard key={day.dayNumber} day={day} />
-        ))}
-      </div>
-    </div>
+    <ItineraryEditor tripId={tripId} destination={trip?.preferenceSet?.destination} />
   )
 }

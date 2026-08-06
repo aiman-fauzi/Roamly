@@ -159,6 +159,7 @@ model Trip {
   title         String     @db.VarChar(200)
   status        TripStatus @default(DRAFT)
   itineraryJson Json?
+  itineraryEditVersion Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

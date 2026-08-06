@@ -97,7 +97,10 @@ export async function updateTripStatus(
     where: { id: tripId },
     data: {
       status,
-      ...(itineraryJson !== undefined && { itineraryJson }),
+      ...(itineraryJson !== undefined && {
+        itineraryJson,
+        itineraryEditVersion: { increment: 1 },
+      }),
     },
   })
 }

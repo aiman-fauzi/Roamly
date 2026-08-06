@@ -1,23 +1,22 @@
 import { NextResponse } from 'next/server'
 
-import { requireApiUser } from '@/app/api/authRouteUtils'
+import {
+  completeTimedResponse,
+  err,
+  requireAuthenticatedTrip,
+} from '@/app/api/trips/[tripId]/travelRouteUtils'
+import { RequestTiming } from '@/lib/observability/requestTiming'
 import { ExchangeRateError } from '@/services/exchangeRateService'
 import {
   ItineraryGenerationError,
   ItineraryGenerationService,
 } from '@/services/itinerary/itineraryGenerationService'
-import { ensureUser } from '@/services/userService'
-import type { ApiErrorResponse } from '@/types/api'
 
 interface RouteContext {
   params: Promise<{ tripId: string }>
 }
 
 export const maxDuration = 60
-
-function err(error: string, code: string, status: number, details?: unknown) {
-  return NextResponse.json<ApiErrorResponse>({ error, code, details }, { status })
-}
 
 function readNestedDetails(details: unknown): Record<string, unknown> | undefined {
   if (!details || typeof details !== 'object') return undefined
@@ -61,36 +60,53 @@ function generationErrorMessage(error: ItineraryGenerationError): string {
 }
 
 export async function POST(_request: Request, { params }: RouteContext) {
+  const timing = new RequestTiming('itinerary_generation')
   const { tripId } = await params
-  const auth = await requireApiUser()
-  if (!auth.user) return auth.response
+  const guard = await requireAuthenticatedTrip(tripId, timing)
+  if ('response' in guard) return completeTimedResponse(guard.response, timing, 'error')
 
   try {
-    await ensureUser(auth.user.id, auth.user.email)
     const result = await new ItineraryGenerationService().generate({
       tripId,
-      userId: auth.user.id,
+      userId: guard.userId,
       persist: true,
+      timing,
     })
-    return NextResponse.json({
-      trip: result.trip,
-      itinerary: result.itinerary,
-      destinationContext: {
-        eligibleCandidates: result.summary.eligibleCandidates,
-        candidatesSentToGemini: result.summary.candidatesSent,
-        omittedCandidates: result.summary.candidatesOmitted,
-        contextSize: result.summary.contextSerializedSize,
-        generationLatencyMs: result.summary.generationLatencyMs,
-      },
-    })
+    return completeTimedResponse(
+      NextResponse.json({
+        trip: result.trip,
+        itinerary: result.itinerary,
+        destinationContext: {
+          eligibleCandidates: result.summary.eligibleCandidates,
+          candidatesSentToGemini: result.summary.candidatesSent,
+          omittedCandidates: result.summary.candidatesOmitted,
+          contextSize: result.summary.contextSerializedSize,
+          generationLatencyMs: result.summary.generationLatencyMs,
+        },
+      }),
+      timing,
+      'success'
+    )
   } catch (error) {
     if (error instanceof ExchangeRateError) {
-      return err(error.message, 'EXCHANGE_RATE_UNAVAILABLE', 400)
+      return completeTimedResponse(
+        err(error.message, 'EXCHANGE_RATE_UNAVAILABLE', 400),
+        timing,
+        'error'
+      )
     }
     if (error instanceof ItineraryGenerationError) {
-      return err(generationErrorMessage(error), error.code, error.status, error.details)
+      return completeTimedResponse(
+        err(generationErrorMessage(error), error.code, error.status, error.details),
+        timing,
+        'error'
+      )
     }
     const message = error instanceof Error ? error.message : 'Unknown generation error'
-    return err('Failed to generate itinerary', 'GENERATION_FAILED', 500, { reason: message })
+    return completeTimedResponse(
+      err('Failed to generate itinerary', 'GENERATION_FAILED', 500, { reason: message }),
+      timing,
+      'error'
+    )
   }
 }

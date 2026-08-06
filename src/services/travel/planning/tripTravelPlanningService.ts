@@ -4,6 +4,7 @@ import { generateItinerary } from '@/ai/aiService'
 import { GeminiProviderError } from '@/ai/providers/GeminiProvider'
 import type { GenerateItineraryRequest, GenerateItineraryResponse } from '@/ai/types'
 import { prisma } from '@/db/client'
+import type { RequestTiming } from '@/lib/observability/requestTiming'
 import type {
   PersistedTripTravelPlanningRequestInput,
   TripTravelPlanningRequestInput,
@@ -181,6 +182,7 @@ export interface TripTravelPlanningOptions {
   tripId: string
   userId?: string
   input: PersistedTripTravelPlanningRequestInput | TripTravelPlanningRequestInput
+  timing?: RequestTiming
 }
 
 export interface TripTravelPlanningSummary {
@@ -707,6 +709,7 @@ export class TripTravelPlanningService {
         options.input.persist ? 'persist' : 'preview'
       )
       const request: GenerateItineraryRequest = {
+        observabilityRequestId: options.timing?.requestId,
         destination: prepared.preferences.destination,
         budget: prepared.preferences.budget,
         durationDays: prepared.preferences.durationDays,
@@ -938,17 +941,21 @@ export class TripTravelPlanningService {
       quoteCurrency: currency,
     })
 
-    const destinationRetrieval = await this.dependencies.retrieveDestinations({
-      cityId: destinationCity.id,
-      travelStyles: preferenceSet.travelStyles,
-      interests: [
-        ...preferenceSet.activityPreferences,
-        ...preferenceSet.foodPreferences,
-        ...profile.travelInterests,
-      ],
-      budgetLevel: readBudgetLevel(preferenceSet.travelStyles),
-      limitPerType: 8,
-    })
+    const retrieveDestinations = () =>
+      this.dependencies.retrieveDestinations({
+        cityId: destinationCity.id,
+        travelStyles: preferenceSet.travelStyles,
+        interests: [
+          ...preferenceSet.activityPreferences,
+          ...preferenceSet.foodPreferences,
+          ...profile.travelInterests,
+        ],
+        budgetLevel: readBudgetLevel(preferenceSet.travelStyles),
+        limitPerType: 8,
+      })
+    const destinationRetrieval = options.timing
+      ? await options.timing.measure('destination_retrieval', retrieveDestinations)
+      : await retrieveDestinations()
     const destinationContext = buildGeminiDestinationContext(destinationRetrieval, {
       maxCandidates: options.input.maxCandidates ?? 24,
       maxSerializedSize: 12_000,

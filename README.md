@@ -91,6 +91,8 @@ The full planning route sends Gemini only compact offer summaries, selected offe
 
 Standalone itinerary generation uses a compact Gemini contract for production latency: Roamly retrieves/ranks candidates from Supabase, sends at most `ITINERARY_MAX_CANDIDATES` candidates within `ITINERARY_CONTEXT_BUDGET`, asks Gemini for only `{ candidateId, day, startTime, durationMinutes, reason }`, then enriches the validated IDs with database metadata on the server. Gemini cannot browse, query Supabase directly, or invent unsupported destinations.
 
+Completed itineraries support versioned day-by-day editing. Reorder, lock, notes, replacement, and day-regeneration writes use owner-scoped optimistic concurrency. Replacement and regeneration payloads accept IDs only; names, coordinates, categories, images, durations, and known prices are rebuilt from the current active destination candidate set before one atomic itinerary write. See `docs/itinerary-editor.md`.
+
 ## Run Locally
 
 ```bash
@@ -123,6 +125,14 @@ Travel-offer and persisted planning tests:
 ```bash
 npx vitest --run src/services/travel src/lib/validations/__tests__/travelOfferValidation.test.ts "src/app/api/trips/[tripId]/flights/route.test.ts" "src/app/api/trips/[tripId]/plan/route.test.ts" "src/app/api/trips/[tripId]/travel-profile/route.test.ts" "src/app/api/trips/[tripId]/flights/select/route.test.ts" "src/app/api/trips/[tripId]/selections/route.test.ts"
 ```
+
+Summarize exported production operation logs:
+
+```bash
+npm run observability:travel-summary -- --input=travel-production.jsonl
+```
+
+Alert thresholds and log-drain guidance are in `docs/travel-observability.md`.
 
 ## Prisma Changes
 

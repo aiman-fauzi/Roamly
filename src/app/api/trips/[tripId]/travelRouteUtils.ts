@@ -24,7 +24,9 @@ export interface AuthenticatedTrip {
 }
 
 export function err(error: string, code: string, status: number, details?: unknown) {
-  return NextResponse.json<ApiErrorResponse>({ error, code, details }, { status })
+  const response = NextResponse.json<ApiErrorResponse>({ error, code, details }, { status })
+  response.headers.set('X-Roamly-Error-Code', code)
+  return response
 }
 
 export async function readJsonBody(
@@ -71,10 +73,16 @@ export async function requireAuthenticatedTrip(
 export function completeTimedResponse(
   response: NextResponse,
   timing: RequestTiming,
-  outcome: 'success' | 'error'
+  outcome: 'success' | 'error' | 'fallback'
 ): NextResponse {
   response.headers.set('Server-Timing', timing.serverTiming())
-  timing.finish(outcome)
+  const errorCode = response.headers.get('X-Roamly-Error-Code')
+  response.headers.delete('X-Roamly-Error-Code')
+  timing.finish({
+    status: outcome === 'error' ? 'failure' : outcome,
+    statusCode: response.status,
+    errorCode,
+  })
   return response
 }
 

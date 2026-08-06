@@ -1,0 +1,3 @@
+{"event":"roamly_operation","operation":"travel_selection_get","requestId":"sample-1","durationMs":120,"status":"success","statusCode":200,"region":"sin1","cacheStatus":"hit","errorCode":null,"runtimeState":"warm"}
+{"event":"roamly_operation","operation":"travel_selection_get","requestId":"sample-2","durationMs":480,"status":"success","statusCode":200,"region":"sin1","cacheStatus":"miss","errorCode":null,"runtimeState":"cold"}
+{"event":"roamly_operation","operation":"gemini_invocation","requestId":"sample-3","durationMs":16000,"status":"fallback","statusCode":200,"region":"sin1","cacheStatus":"not_applicable","errorCode":"AI_QUOTA_EXCEEDED","runtimeState":"warm"}

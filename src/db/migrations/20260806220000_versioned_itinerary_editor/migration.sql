@@ -1,0 +1,2 @@
+ALTER TABLE "trips"
+ADD COLUMN "itineraryEditVersion" INTEGER NOT NULL DEFAULT 0;

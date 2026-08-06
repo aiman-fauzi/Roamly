@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
 import {
+  completeTimedResponse,
   err,
   readJsonBody,
   requireAuthenticatedTrip,
@@ -8,6 +9,7 @@ import {
   type RouteContext,
 } from '../travelRouteUtils'
 
+import { RequestTiming } from '@/lib/observability/requestTiming'
 import {
   persistedTripTravelPlanningRequestSchema,
   tripTravelProfileUpdateSchema,
@@ -56,16 +58,21 @@ function planningResponse(
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
+  const timing = new RequestTiming('travel_plan_post')
   const { tripId } = await params
-  const guard = await requireAuthenticatedTrip(tripId)
-  if ('response' in guard) return guard.response
+  const guard = await requireAuthenticatedTrip(tripId, timing)
+  if ('response' in guard) return completeTimedResponse(guard.response, timing, 'error')
 
   const json = await readJsonBody(request)
-  if ('response' in json) return json.response
+  if ('response' in json) return completeTimedResponse(json.response, timing, 'error')
 
   const parsed = persistedTripTravelPlanningRequestSchema.safeParse(json.body ?? {})
   if (!parsed.success) {
-    return err('Travel planning request is invalid.', 'VALIDATION_ERROR', 400, parsed.error.flatten())
+    return completeTimedResponse(
+      err('Travel planning request is invalid.', 'VALIDATION_ERROR', 400, parsed.error.flatten()),
+      timing,
+      'error'
+    )
   }
 
   try {
@@ -84,40 +91,50 @@ export async function POST(request: Request, { params }: RouteContext) {
       tripId,
       userId: guard.userId,
       input: planningInput,
+      timing,
     })
 
-    return NextResponse.json({
-      trip: result.trip,
-      itinerary: result.itinerary,
-      itineraryStatus: { status: 'generated' },
-      budgetSummary: result.budgetSummary,
-      itineraryTravelContext: result.itineraryTravelContext,
-      planningPreview: result.planningPreview,
-      selectedFlightOffer: result.selectedFlightOffer,
-      selectedHotelOffer: result.selectedHotelOffer,
-      flightSearch: result.flightSearch,
-      hotelSearch: result.hotelSearch,
-      destinationContext: {
-        eligibleCandidates: result.summary.eligibleCandidates,
-        candidatesSentToGemini: result.summary.candidatesSentToGemini,
-        omittedCandidates: result.summary.candidatesOmitted,
-      },
-      summary: result.summary,
-    })
+    return completeTimedResponse(
+      NextResponse.json({
+        trip: result.trip,
+        itinerary: result.itinerary,
+        itineraryStatus: { status: 'generated' },
+        budgetSummary: result.budgetSummary,
+        itineraryTravelContext: result.itineraryTravelContext,
+        planningPreview: result.planningPreview,
+        selectedFlightOffer: result.selectedFlightOffer,
+        selectedHotelOffer: result.selectedHotelOffer,
+        flightSearch: result.flightSearch,
+        hotelSearch: result.hotelSearch,
+        destinationContext: {
+          eligibleCandidates: result.summary.eligibleCandidates,
+          candidatesSentToGemini: result.summary.candidatesSentToGemini,
+          omittedCandidates: result.summary.candidatesOmitted,
+        },
+        summary: result.summary,
+      }),
+      timing,
+      'success'
+    )
   } catch (error) {
     if (error instanceof TravelPlanningError && AI_PREVIEW_FALLBACK_CODES.has(error.code)) {
       const preview = await new TripTravelPlanningService().previewBudget({
         tripId,
         userId: guard.userId,
         input: { ...parsed.data, persist: false },
+        timing,
       })
-      return planningResponse(preview, {
-        status: 'planning_preview_due_to_ai_failure',
-        code: error.code,
-        message:
-          'We could not generate the full itinerary right now. Your sample travel plan and recommended places are still available.',
-      })
+      return completeTimedResponse(
+        planningResponse(preview, {
+          status: 'planning_preview_due_to_ai_failure',
+          code: error.code,
+          message:
+            'We could not generate the full itinerary right now. Your sample travel plan and recommended places are still available.',
+        }),
+        timing,
+        'fallback'
+      )
     }
-    return routeErrorResponse(error)
+    return completeTimedResponse(routeErrorResponse(error), timing, 'error')
   }
 }

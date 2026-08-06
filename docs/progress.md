@@ -2,7 +2,7 @@
 
 > **Project:** Roamly - AI-Powered Travel Planning SaaS
 > **Tagline:** Plan Less. Explore More.
-> **Last Updated:** 2026-08-05
+> **Last Updated:** 2026-08-06
 > **Stack:** Next.js 16, TypeScript, Tailwind CSS, Supabase, Prisma, Google Gemini
 
 ---
@@ -22,6 +22,16 @@
 ---
 
 ## Completed In This Pass
+
+### Production Observability and Itinerary Editing
+
+- Added stable JSONL operation metrics for authentication, ownership, trusted travel-selection reads/writes/deletes, planning preview, destination retrieval, itinerary generation, Gemini invocation, provider fallback, cache state, region, and cold/warm runtime state.
+- Added practical p95/error-rate thresholds, Vercel log guidance, and `npm run observability:travel-summary -- --input=<log-jsonl>` for latency/outcome/cache/error/region summaries.
+- Added additive `Trip.itineraryEditVersion` persistence and owner-scoped atomic compare-and-swap writes for all itinerary mutations.
+- Added strict reorder, lock, notes, replacement-options, replacement, and single-day regeneration APIs. Candidate validation remains exact and active-record-only.
+- Added deterministic no-write regeneration fallback, locked-item preservation, other-day preservation, replacement source history, updated budget/roadmap summaries, and map-ready coordinate output.
+- Replaced passive itinerary rows with a responsive editor supporting desktop drag, keyboard/touch move controls, cross-day movement, locks, notes, alternatives, fallback review, optimistic rollback, conflict reload, and save/retry states.
+- Updated Next.js to `16.3.0` and PostCSS to `8.5.23` after production audit advisories were published for the previous versions.
 
 ### Recent Travel Knowledge and Planning Pipeline Work
 

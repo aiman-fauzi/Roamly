@@ -20,4 +20,12 @@ export const API = {
   tripTravelSelection: (tripId: string) => `/api/trips/${tripId}/travel-selection`,
   tripPlanningPreview: (tripId: string) => `/api/trips/${tripId}/planning-preview`,
   tripPlan: (tripId: string) => `/api/trips/${tripId}/plan`,
+  tripItineraryEditor: (tripId: string) => `/api/trips/${tripId}/itinerary-editor`,
+  tripItineraryReorder: (tripId: string) => `/api/trips/${tripId}/itinerary-editor/reorder`,
+  tripItineraryLock: (tripId: string) => `/api/trips/${tripId}/itinerary-editor/lock`,
+  tripItineraryNotes: (tripId: string) => `/api/trips/${tripId}/itinerary-editor/notes`,
+  tripItineraryReplacements: (tripId: string) =>
+    `/api/trips/${tripId}/itinerary-editor/replacements`,
+  tripItineraryRegenerateDay: (tripId: string) =>
+    `/api/trips/${tripId}/itinerary-editor/regenerate-day`,
 } as const

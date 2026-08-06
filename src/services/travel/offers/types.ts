@@ -15,7 +15,7 @@ export type TravelOfferResultStatus =
   | 'INVALID_REQUEST'
   | 'PROVIDER_UNAVAILABLE'
 
-export type TravelOfferCacheStatus = 'MISS' | 'HIT' | 'REFRESHED'
+export type TravelOfferCacheStatus = 'MISS' | 'HIT' | 'REFRESHED' | 'COALESCED'
 
 export type CabinClass = 'ECONOMY' | 'PREMIUM_ECONOMY' | 'BUSINESS' | 'FIRST'
 

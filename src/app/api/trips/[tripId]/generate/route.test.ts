@@ -7,6 +7,7 @@ import {
   ItineraryGenerationError,
   ItineraryGenerationService,
 } from '@/services/itinerary/itineraryGenerationService'
+import { getTripById } from '@/services/tripService'
 import { ensureUser } from '@/services/userService'
 
 const routeMocks = vi.hoisted(() => ({
@@ -40,6 +41,10 @@ vi.mock('@/services/userService', () => ({
   ensureUser: vi.fn(),
 }))
 
+vi.mock('@/services/tripService', () => ({
+  getTripById: vi.fn(),
+}))
+
 describe('destination-aware itinerary generation route', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -52,6 +57,7 @@ describe('destination-aware itinerary generation route', () => {
       },
     } as never)
     vi.mocked(ensureUser).mockResolvedValue({ id: 'user-1' } as never)
+    vi.mocked(getTripById).mockResolvedValue({ id: 'trip-1', userId: 'user-1' } as never)
     routeMocks.generate.mockResolvedValue({
       trip: { id: 'trip-1' },
       itinerary: { title: 'Kuala Lumpur in One Day' },
@@ -75,6 +81,7 @@ describe('destination-aware itinerary generation route', () => {
       tripId: 'trip-1',
       userId: 'user-1',
       persist: true,
+      timing: expect.anything(),
     })
     expect(body.destinationContext).toMatchObject({
       eligibleCandidates: 1,

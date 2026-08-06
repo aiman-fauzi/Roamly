@@ -111,12 +111,18 @@ function attachItemMetadata(
 
   return {
     ...item,
+    itemId: item.itemId ?? item.candidateId,
     title: candidate?.name ?? item.title,
     location: candidate?.address ?? item.location,
     latitude: candidate?.latitude ?? item.latitude,
     longitude: candidate?.longitude ?? item.longitude,
     sourceEntityType: parsed?.entityType,
     sourceEntityId: parsed?.id,
+    category: candidate?.categories[0]?.replace(/_/g, ' '),
+    area: candidate?.address,
+    locked: item.locked ?? false,
+    editorNotes: item.editorNotes ?? '',
+    source: item.source ?? 'generated',
   }
 }
 
