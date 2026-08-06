@@ -1,32 +1,36 @@
 import type { PreferenceSet, TripTravelProfile } from '@prisma/client'
 
 import { prisma } from '@/db/client'
+import type { RequestTiming } from '@/lib/observability/requestTiming'
+import {
+  DestinationRetrievalService,
+  resolveDestinationCity,
+  type DestinationCityResolution,
+} from '@/services/destinations/destinationRetrievalService'
+import type { DestinationRetrievalResult } from '@/services/destinations/types'
 import { getPreferenceSet } from '@/services/preferenceService'
+import { getProfileSummary } from '@/services/profileService'
 import {
   buildTravelSelectionFingerprint,
   TRAVEL_SELECTION_FINGERPRINT_VERSION,
   TRAVEL_SELECTION_PROVIDER,
 } from '@/services/travel/persistence/travelSelectionFingerprint'
+import type { ItineraryTravelContext } from '@/services/travel/planning/liveTravelContext'
 import {
-  TripTravelPlanningService,
-  type TripTravelPlanningPreviewResult,
-} from '@/services/travel/planning/tripTravelPlanningService'
+  buildDestinationPlanningPreview,
+  buildTrustedTravelBudgetContext,
+  buildTrustedTravelSelectionContext,
+  TrustedTravelContextError,
+  TrustedTravelRequestScope,
+  type TrustedTravelBudgetContext,
+  type TrustedTravelSearchInputs,
+} from '@/services/travel/planning/trustedTravelSelectionContext'
 import { dateToDateOnly } from '@/services/travel/profile/tripTravelProfileService'
 import { getTripById } from '@/services/tripService'
-import type { Trip } from '@/types/trip'
+import type { TripWithPreferences } from '@/types/trip'
 
 export type TravelSelectionState = 'none' | 'valid' | 'stale' | 'invalid'
-
-export interface TravelSelectionSearchInputs {
-  originAirportCode: string
-  destinationAirportCode: string
-  outboundDate: string
-  returnDate: string
-  travellers: number
-  rooms: number
-  cabinClass: 'ECONOMY' | 'PREMIUM_ECONOMY' | 'BUSINESS' | 'FIRST'
-  currency: string
-}
+export type TravelSelectionSearchInputs = TrustedTravelSearchInputs
 
 export interface SaveTravelSelectionInput extends TravelSelectionSearchInputs {
   selectedOutboundFlightId: string
@@ -55,29 +59,59 @@ export interface ValidTravelSelectionResponse extends TravelSelectionBaseRespons
   selectedOutboundFlightId: string
   selectedReturnFlightId: string
   selectedHotelId: string
-  flightSearch: TripTravelPlanningPreviewResult['flightSearch']
-  hotelSearch: TripTravelPlanningPreviewResult['hotelSearch']
-  budgetSummary: TripTravelPlanningPreviewResult['budgetSummary']
-  itineraryTravelContext: TripTravelPlanningPreviewResult['itineraryTravelContext']
-  planningPreview: TripTravelPlanningPreviewResult['planningPreview']
+  flightSearch: TrustedTravelBudgetContext['flightSearch']
+  hotelSearch: TrustedTravelBudgetContext['hotelSearch']
+  budgetSummary: TrustedTravelBudgetContext['budgetSummary']
+  itineraryTravelContext: TrustedTravelBudgetContext['itineraryTravelContext']
+  planningPreview: TrustedTravelBudgetContext['itineraryTravelContext']['planningPreview']
+}
+
+export interface DestinationPlanningPreviewResponse {
+  planningPreview: ItineraryTravelContext['planningPreview']
+  eligibleCandidates: number
+  message: string
 }
 
 export type TravelSelectionResponse = TravelSelectionBaseResponse | ValidTravelSelectionResponse
 
 interface TripTravelSelectionDependencies {
   db?: typeof prisma
-  getTrip?: (tripId: string, userId: string) => Promise<Trip | null>
+  getTrip?: (tripId: string, userId: string) => Promise<TripWithPreferences | null>
   getPreferenceSet?: (tripId: string) => Promise<PreferenceSet | null>
-  previewBudget?: (
-    input: Parameters<TripTravelPlanningService['previewBudget']>[0]
-  ) => Promise<TripTravelPlanningPreviewResult>
+  getTravelInterests?: (userId: string) => Promise<string[]>
+  resolveCity?: (destination: string) => Promise<DestinationCityResolution | null>
+  retrieveDestinations?: (query: {
+    cityId: string
+    travelStyles: string[]
+    interests: string[]
+    budgetLevel?: string
+    limitPerType: number
+    includeTypes?: ['ATTRACTION']
+  }) => Promise<DestinationRetrievalResult>
+  buildPlanningPreview?: typeof buildDestinationPlanningPreview
+  buildTrustedContext?: (input: {
+    destination: string
+    durationDays: number
+    userBudget: number
+    searchInputs: TravelSelectionSearchInputs
+    selectedOutboundFlightId: string
+    selectedReturnFlightId: string
+    selectedHotelId: string
+    fingerprint?: string
+    timing?: RequestTiming
+  }) => Promise<TrustedTravelBudgetContext>
   now?: () => Date
 }
 
-interface ResolvedPreview {
-  result: TripTravelPlanningPreviewResult
-  selectedFlightOfferId: string
-  selectedHotelOfferId: string
+interface OwnedSelectionContext {
+  trip: TripWithPreferences
+  profile: TripTravelProfile | null
+  preferences: PreferenceSet
+}
+
+interface RestoredSelection {
+  response: TravelSelectionResponse
+  trustedContext?: TrustedTravelBudgetContext
 }
 
 export class TravelSelectionError extends Error {
@@ -117,29 +151,6 @@ function profileSearchInputs(profile: TripTravelProfile): TravelSelectionSearchI
   }
 }
 
-function planningInput(
-  input: TravelSelectionSearchInputs,
-  selected?: { selectedFlightOfferId: string; selectedHotelOfferId: string }
-) {
-  return {
-    originAirportCode: input.originAirportCode,
-    destinationAirportCode: input.destinationAirportCode,
-    departureDate: input.outboundDate,
-    returnDate: input.returnDate,
-    checkInDate: input.outboundDate,
-    checkOutDate: input.returnDate,
-    adults: input.travellers,
-    children: 0,
-    infants: 0,
-    rooms: input.rooms,
-    cabinClass: input.cabinClass,
-    currency: input.currency,
-    persist: false,
-    maxCandidates: 12,
-    ...selected,
-  }
-}
-
 function normalizedSearchInputs(input: TravelSelectionSearchInputs): TravelSelectionSearchInputs {
   return {
     ...input,
@@ -167,6 +178,27 @@ function assertSupportedScenario(destination: string, input: TravelSelectionSear
   }
 }
 
+function requirePlanningFields(preferences: PreferenceSet) {
+  if (!preferences.destination || preferences.durationDays == null || preferences.budget == null) {
+    throw new TravelSelectionError(
+      'PREFERENCES_NOT_FOUND',
+      'Trip destination, duration, and budget preferences are required.',
+      400
+    )
+  }
+  return {
+    destination: preferences.destination,
+    durationDays: preferences.durationDays,
+    userBudget: preferences.budget,
+  }
+}
+
+function readBudgetLevel(travelStyles: string[]): string | undefined {
+  if (travelStyles.includes('luxury')) return 'luxury'
+  if (travelStyles.includes('budget')) return 'budget'
+  return undefined
+}
+
 function hasPersistedSelection(profile: TripTravelProfile): boolean {
   return Boolean(
     profile.selectedOutboundFlightId ||
@@ -182,89 +214,71 @@ export class TripTravelSelectionService {
   private readonly getPreferenceSet: NonNullable<
     TripTravelSelectionDependencies['getPreferenceSet']
   >
-  private readonly previewBudget: NonNullable<TripTravelSelectionDependencies['previewBudget']>
+  private readonly getTravelInterests: NonNullable<
+    TripTravelSelectionDependencies['getTravelInterests']
+  >
+  private readonly resolveCity: NonNullable<TripTravelSelectionDependencies['resolveCity']>
+  private readonly retrieveDestinations: NonNullable<
+    TripTravelSelectionDependencies['retrieveDestinations']
+  >
+  private readonly buildTrustedContext: NonNullable<
+    TripTravelSelectionDependencies['buildTrustedContext']
+  >
+  private readonly buildPlanningPreview: typeof buildDestinationPlanningPreview
   private readonly now: () => Date
 
   constructor(dependencies: TripTravelSelectionDependencies = {}) {
     this.db = dependencies.db ?? prisma
     this.getTrip = dependencies.getTrip ?? getTripById
     this.getPreferenceSet = dependencies.getPreferenceSet ?? getPreferenceSet
-    this.previewBudget =
-      dependencies.previewBudget ??
-      ((input) => new TripTravelPlanningService().previewBudget(input))
+    this.getTravelInterests =
+      dependencies.getTravelInterests ??
+      (async (userId) => (await getProfileSummary(userId)).profile.travelInterests)
+    this.resolveCity = dependencies.resolveCity ?? resolveDestinationCity
+    this.retrieveDestinations =
+      dependencies.retrieveDestinations ??
+      ((query) => new DestinationRetrievalService().retrieve(query))
+    this.buildTrustedContext =
+      dependencies.buildTrustedContext ??
+      (async (input) => {
+        const scope = new TrustedTravelRequestScope(
+          {
+            destination: input.destination,
+            durationDays: input.durationDays,
+            userBudget: input.userBudget,
+            searchInputs: input.searchInputs,
+            fingerprint: input.fingerprint,
+          },
+          {},
+          input.timing
+        )
+        const selection = await buildTrustedTravelSelectionContext(scope, input)
+        return buildTrustedTravelBudgetContext(scope, selection)
+      })
+    this.buildPlanningPreview = dependencies.buildPlanningPreview ?? buildDestinationPlanningPreview
     this.now = dependencies.now ?? (() => new Date())
   }
 
-  async get(input: { tripId: string; userId: string }): Promise<TravelSelectionResponse> {
-    const { profile, preferences } = await this.loadOwnedContext(input.tripId, input.userId)
-    const searchInputs = profile ? profileSearchInputs(profile) : null
-    if (!profile || !hasPersistedSelection(profile)) {
-      return {
-        state: 'none',
-        version: profile?.selectionVersion ?? 0,
-        searchInputs: searchInputs ?? undefined,
-      }
-    }
-    if (!searchInputs) {
-      return this.untrustedState(profile, 'invalid', 'PROFILE_INCOMPLETE')
-    }
-    if (profile.selectionProvider !== TRAVEL_SELECTION_PROVIDER) {
-      return this.untrustedState(profile, 'invalid', 'PROVIDER_UNSUPPORTED', searchInputs)
-    }
-    if (profile.selectionFingerprintVersion !== TRAVEL_SELECTION_FINGERPRINT_VERSION) {
-      return this.untrustedState(
-        profile,
-        'stale',
-        'FINGERPRINT_VERSION_UNSUPPORTED',
-        searchInputs
-      )
-    }
-
-    const expectedFingerprint = buildTravelSelectionFingerprint({
-      destination: preferences.destination!,
-      ...searchInputs,
-    })
-    if (expectedFingerprint !== profile.selectionFingerprint) {
-      return this.untrustedState(profile, 'stale', 'FINGERPRINT_MISMATCH', searchInputs)
-    }
-    if (
-      !profile.selectedOutboundFlightId ||
-      !profile.selectedReturnFlightId ||
-      !profile.selectedHotelId ||
-      !profile.selectionReviewedAt
-    ) {
-      return this.untrustedState(profile, 'invalid', 'OFFER_IDS_UNSUPPORTED', searchInputs)
-    }
-
-    try {
-      const resolved = await this.resolveTrustedPreview({
-        tripId: input.tripId,
-        userId: input.userId,
-        searchInputs,
-        selectedOutboundFlightId: profile.selectedOutboundFlightId,
-        selectedReturnFlightId: profile.selectedReturnFlightId,
-        selectedHotelId: profile.selectedHotelId,
-      })
-      return this.validResponse({
-        profile,
-        searchInputs,
-        resolved,
-        reviewedAt: profile.selectionReviewedAt,
-      })
-    } catch (error) {
-      if (error instanceof TravelSelectionError && error.code === 'OFFER_IDS_UNSUPPORTED') {
-        return this.untrustedState(profile, 'invalid', 'OFFER_IDS_UNSUPPORTED', searchInputs)
-      }
-      return this.untrustedState(profile, 'invalid', 'REGENERATION_FAILED', searchInputs)
-    }
+  async get(input: {
+    tripId: string
+    userId: string
+    ownedTrip?: TripWithPreferences
+    timing?: RequestTiming
+  }): Promise<TravelSelectionResponse> {
+    input.timing?.record('destination_retrieval', 0)
+    const context = await this.loadOwnedContext(input)
+    return (await this.restoreFromContext(context, input.timing)).response
   }
 
   async save(input: {
     tripId: string
     userId: string
+    ownedTrip?: TripWithPreferences
     selection: SaveTravelSelectionInput
+    timing?: RequestTiming
   }): Promise<ValidTravelSelectionResponse> {
-    const { profile, preferences } = await this.loadOwnedContext(input.tripId, input.userId)
+    input.timing?.record('destination_retrieval', 0)
+    const { profile, preferences } = await this.loadOwnedContext(input)
     if (!profile) {
       throw new TravelSelectionError(
         'TRAVEL_PROFILE_NOT_FOUND',
@@ -273,47 +287,48 @@ export class TripTravelSelectionService {
       )
     }
 
+    const planning = requirePlanningFields(preferences)
     const searchInputs = normalizedSearchInputs(input.selection)
-    assertSupportedScenario(preferences.destination!, searchInputs)
-    const resolved = await this.resolveTrustedPreview({
-      tripId: input.tripId,
-      userId: input.userId,
+    assertSupportedScenario(planning.destination, searchInputs)
+    const trustedContext = await this.regenerate({
+      ...planning,
       searchInputs,
       selectedOutboundFlightId: input.selection.selectedOutboundFlightId,
       selectedReturnFlightId: input.selection.selectedReturnFlightId,
       selectedHotelId: input.selection.selectedHotelId,
-    })
-    const fingerprint = buildTravelSelectionFingerprint({
-      destination: preferences.destination!,
-      ...searchInputs,
+      timing: input.timing,
     })
     const reviewedAt = this.now()
-    const updated = await this.db.tripTravelProfile.updateMany({
-      where: {
-        tripId: input.tripId,
-        selectionVersion: input.selection.expectedVersion,
-      },
-      data: {
-        originAirportCode: searchInputs.originAirportCode,
-        destinationAirportCode: searchInputs.destinationAirportCode,
-        departureDate: new Date(`${searchInputs.outboundDate}T00:00:00.000Z`),
-        returnDate: new Date(`${searchInputs.returnDate}T00:00:00.000Z`),
-        adults: searchInputs.travellers,
-        children: 0,
-        infants: 0,
-        rooms: searchInputs.rooms,
-        cabinClass: searchInputs.cabinClass,
-        currency: searchInputs.currency,
-        selectedOutboundFlightId: input.selection.selectedOutboundFlightId,
-        selectedReturnFlightId: input.selection.selectedReturnFlightId,
-        selectedHotelId: input.selection.selectedHotelId,
-        selectionFingerprint: fingerprint,
-        selectionFingerprintVersion: TRAVEL_SELECTION_FINGERPRINT_VERSION,
-        selectionProvider: TRAVEL_SELECTION_PROVIDER,
-        selectionReviewedAt: reviewedAt,
-        selectionVersion: { increment: 1 },
-      },
-    })
+    const write = () =>
+      this.db.tripTravelProfile.updateMany({
+        where: {
+          tripId: input.tripId,
+          selectionVersion: input.selection.expectedVersion,
+        },
+        data: {
+          originAirportCode: searchInputs.originAirportCode,
+          destinationAirportCode: searchInputs.destinationAirportCode,
+          departureDate: new Date(`${searchInputs.outboundDate}T00:00:00.000Z`),
+          returnDate: new Date(`${searchInputs.returnDate}T00:00:00.000Z`),
+          adults: searchInputs.travellers,
+          children: 0,
+          infants: 0,
+          rooms: searchInputs.rooms,
+          cabinClass: searchInputs.cabinClass,
+          currency: searchInputs.currency,
+          selectedOutboundFlightId: input.selection.selectedOutboundFlightId,
+          selectedReturnFlightId: input.selection.selectedReturnFlightId,
+          selectedHotelId: input.selection.selectedHotelId,
+          selectionFingerprint: trustedContext.fingerprint,
+          selectionFingerprintVersion: TRAVEL_SELECTION_FINGERPRINT_VERSION,
+          selectionProvider: TRAVEL_SELECTION_PROVIDER,
+          selectionReviewedAt: reviewedAt,
+          selectionVersion: { increment: 1 },
+        },
+      })
+    const updated = input.timing
+      ? await input.timing.measure('database_write', write)
+      : await write()
     if (updated.count !== 1) {
       throw new TravelSelectionError(
         'TRAVEL_SELECTION_VERSION_CONFLICT',
@@ -325,7 +340,7 @@ export class TripTravelSelectionService {
     return this.validResponse({
       profile: { ...profile, selectionVersion: input.selection.expectedVersion + 1 },
       searchInputs,
-      resolved,
+      trustedContext,
       reviewedAt,
       selectedOutboundFlightId: input.selection.selectedOutboundFlightId,
       selectedReturnFlightId: input.selection.selectedReturnFlightId,
@@ -336,26 +351,34 @@ export class TripTravelSelectionService {
   async clear(input: {
     tripId: string
     userId: string
+    ownedTrip?: TripWithPreferences
     expectedVersion: number
+    timing?: RequestTiming
   }): Promise<TravelSelectionResponse> {
-    const { profile } = await this.loadOwnedContext(input.tripId, input.userId)
+    input.timing?.record('destination_retrieval', 0)
+    input.timing?.record('gemini_invocation', 0)
+    const { profile } = await this.loadOwnedContext(input)
     if (!profile || !hasPersistedSelection(profile)) {
       return { state: 'none', version: profile?.selectionVersion ?? 0 }
     }
 
-    const updated = await this.db.tripTravelProfile.updateMany({
-      where: { tripId: input.tripId, selectionVersion: input.expectedVersion },
-      data: {
-        selectedOutboundFlightId: null,
-        selectedReturnFlightId: null,
-        selectedHotelId: null,
-        selectionFingerprint: null,
-        selectionFingerprintVersion: null,
-        selectionProvider: null,
-        selectionReviewedAt: null,
-        selectionVersion: { increment: 1 },
-      },
-    })
+    const write = () =>
+      this.db.tripTravelProfile.updateMany({
+        where: { tripId: input.tripId, selectionVersion: input.expectedVersion },
+        data: {
+          selectedOutboundFlightId: null,
+          selectedReturnFlightId: null,
+          selectedHotelId: null,
+          selectionFingerprint: null,
+          selectionFingerprintVersion: null,
+          selectionProvider: null,
+          selectionReviewedAt: null,
+          selectionVersion: { increment: 1 },
+        },
+      })
+    const updated = input.timing
+      ? await input.timing.measure('database_write', write)
+      : await write()
     if (updated.count !== 1) {
       throw new TravelSelectionError(
         'TRAVEL_SELECTION_VERSION_CONFLICT',
@@ -371,13 +394,101 @@ export class TripTravelSelectionService {
     }
   }
 
-  private async loadOwnedContext(tripId: string, userId: string) {
-    const trip = await this.getTrip(tripId, userId)
-    if (!trip) throw new TravelSelectionError('TRIP_NOT_FOUND', 'Trip not found.', 404)
-    const [profile, preferences] = await Promise.all([
-      this.db.tripTravelProfile.findUnique({ where: { tripId } }),
-      this.getPreferenceSet(tripId),
-    ])
+  async getPlanningPreview(input: {
+    tripId: string
+    userId: string
+    ownedTrip?: TripWithPreferences
+    timing?: RequestTiming
+  }): Promise<DestinationPlanningPreviewResponse> {
+    const context = await this.loadOwnedContext(input)
+    const restored = await this.restoreFromContext(context, input.timing)
+    if (restored.response.state !== 'valid' || !restored.trustedContext) {
+      throw new TravelSelectionError(
+        'TRAVEL_SELECTION_NOT_REVIEWED',
+        'Review the current sample travel options before loading planning recommendations.',
+        409
+      )
+    }
+
+    const planning = requirePlanningFields(context.preferences)
+    const metadata = () =>
+      Promise.all([
+        this.resolveCity(planning.destination),
+        this.getTravelInterests(context.trip.userId),
+      ])
+    const [city, travelInterests] = input.timing
+      ? await input.timing.measure('destination_metadata', metadata)
+      : await metadata()
+    if (!city) {
+      throw new TravelSelectionError(
+        'DESTINATION_CITY_NOT_FOUND',
+        'Destination city is not available in the destination database.',
+        400
+      )
+    }
+
+    const retrieve = () =>
+      this.retrieveDestinations({
+        cityId: city.id,
+        travelStyles: context.preferences.travelStyles,
+        interests: [
+          ...context.preferences.activityPreferences,
+          ...context.preferences.foodPreferences,
+          ...travelInterests,
+        ],
+        budgetLevel: readBudgetLevel(context.preferences.travelStyles),
+        limitPerType: 8,
+        includeTypes: ['ATTRACTION'],
+      })
+    const destinations = input.timing
+      ? await input.timing.measure('destination_retrieval', retrieve)
+      : await retrieve()
+    const planningPreview = this.buildPlanningPreview({
+      context: restored.trustedContext,
+      destinationCandidates: destinations.candidates,
+      timing: input.timing,
+    })
+    if (!planningPreview.strictCandidateIds) {
+      throw new TravelSelectionError(
+        'DESTINATION_CANDIDATE_CONTRACT_VIOLATION',
+        'Planning recommendations contained unsupported destination records.',
+        422
+      )
+    }
+
+    return {
+      planningPreview,
+      eligibleCandidates: destinations.candidates.length,
+      message: 'Destination planning recommendations are ready.',
+    }
+  }
+
+  private async loadOwnedContext(input: {
+    tripId: string
+    userId: string
+    ownedTrip?: TripWithPreferences
+    timing?: RequestTiming
+  }): Promise<OwnedSelectionContext> {
+    const tripWork = () => this.getTrip(input.tripId, input.userId)
+    const trip = input.ownedTrip
+      ? input.ownedTrip
+      : input.timing
+        ? await input.timing.measure('trip_ownership_lookup', tripWork)
+        : await tripWork()
+    if (!trip || trip.id !== input.tripId || trip.userId !== input.userId) {
+      throw new TravelSelectionError('TRIP_NOT_FOUND', 'Trip not found.', 404)
+    }
+
+    const load = () =>
+      Promise.all([
+        this.db.tripTravelProfile.findUnique({ where: { tripId: input.tripId } }),
+        trip.preferenceSet
+          ? Promise.resolve(trip.preferenceSet)
+          : this.getPreferenceSet(input.tripId),
+      ])
+    const [profile, preferences] = input.timing
+      ? await input.timing.measure('trip_profile_loading', load)
+      : await load()
     if (!preferences?.destination) {
       throw new TravelSelectionError(
         'PREFERENCES_NOT_FOUND',
@@ -388,73 +499,119 @@ export class TripTravelSelectionService {
     return { trip, profile, preferences }
   }
 
-  private async resolveTrustedPreview(input: {
-    tripId: string
-    userId: string
-    searchInputs: TravelSelectionSearchInputs
-    selectedOutboundFlightId: string
-    selectedReturnFlightId: string
-    selectedHotelId: string
-  }): Promise<ResolvedPreview> {
-    const initial = await this.previewBudget({
-      tripId: input.tripId,
-      userId: input.userId,
-      input: planningInput(input.searchInputs),
-    })
-    const selectedFlightOffer = initial.flightSearch.offers.find(
-      (offer) =>
-        offer.mockFlightPair?.outboundFlightId === input.selectedOutboundFlightId &&
-        offer.mockFlightPair?.returnFlightId === input.selectedReturnFlightId
-    )
-    const selectedHotelOffer = initial.hotelSearch.offers.find(
-      (offer) => offer.mockHotel?.hotelId === input.selectedHotelId
-    )
-    if (!selectedFlightOffer || !selectedHotelOffer) {
-      throw new TravelSelectionError(
-        'OFFER_IDS_UNSUPPORTED',
-        'One or more selected sample travel options are no longer available.',
-        422
-      )
+  private async restoreFromContext(
+    context: OwnedSelectionContext,
+    timing?: RequestTiming
+  ): Promise<RestoredSelection> {
+    const { profile, preferences } = context
+    const searchInputs = profile ? profileSearchInputs(profile) : null
+    if (!profile || !hasPersistedSelection(profile)) {
+      return {
+        response: {
+          state: 'none',
+          version: profile?.selectionVersion ?? 0,
+          searchInputs: searchInputs ?? undefined,
+        },
+      }
     }
-
-    const result = await this.previewBudget({
-      tripId: input.tripId,
-      userId: input.userId,
-      input: planningInput(input.searchInputs, {
-        selectedFlightOfferId: selectedFlightOffer.id,
-        selectedHotelOfferId: selectedHotelOffer.id,
-      }),
-    })
+    if (!searchInputs) {
+      return { response: this.untrustedState(profile, 'invalid', 'PROFILE_INCOMPLETE') }
+    }
+    if (profile.selectionProvider !== TRAVEL_SELECTION_PROVIDER) {
+      return {
+        response: this.untrustedState(profile, 'invalid', 'PROVIDER_UNSUPPORTED', searchInputs),
+      }
+    }
+    if (profile.selectionFingerprintVersion !== TRAVEL_SELECTION_FINGERPRINT_VERSION) {
+      return {
+        response: this.untrustedState(
+          profile,
+          'stale',
+          'FINGERPRINT_VERSION_UNSUPPORTED',
+          searchInputs
+        ),
+      }
+    }
     if (
-      result.itineraryTravelContext.outboundFlight.id !== input.selectedOutboundFlightId ||
-      result.itineraryTravelContext.returnFlight.id !== input.selectedReturnFlightId ||
-      result.itineraryTravelContext.hotel.id !== input.selectedHotelId ||
-      result.itineraryTravelContext.dataStatus !== 'mock'
+      !profile.selectedOutboundFlightId ||
+      !profile.selectedReturnFlightId ||
+      !profile.selectedHotelId ||
+      !profile.selectionReviewedAt
     ) {
-      throw new TravelSelectionError(
-        'OFFER_IDS_UNSUPPORTED',
-        'The regenerated sample travel options did not match the reviewed identifiers.',
-        422
-      )
+      return {
+        response: this.untrustedState(profile, 'invalid', 'OFFER_IDS_UNSUPPORTED', searchInputs),
+      }
     }
 
-    return {
-      result,
-      selectedFlightOfferId: selectedFlightOffer.id,
-      selectedHotelOfferId: selectedHotelOffer.id,
+    const planning = requirePlanningFields(preferences)
+    const trustedInput: Parameters<
+      NonNullable<TripTravelSelectionDependencies['buildTrustedContext']>
+    >[0] = {
+      ...planning,
+      searchInputs,
+      selectedOutboundFlightId: profile.selectedOutboundFlightId,
+      selectedReturnFlightId: profile.selectedReturnFlightId,
+      selectedHotelId: profile.selectedHotelId,
+      timing,
+    }
+    const fingerprint = timing
+      ? timing.measureSync('fingerprint_generation', () =>
+          buildTravelSelectionFingerprint({ destination: planning.destination, ...searchInputs })
+        )
+      : buildTravelSelectionFingerprint({ destination: planning.destination, ...searchInputs })
+    if (fingerprint !== profile.selectionFingerprint) {
+      return {
+        response: this.untrustedState(profile, 'stale', 'FINGERPRINT_MISMATCH', searchInputs),
+      }
+    }
+
+    trustedInput.fingerprint = fingerprint
+
+    try {
+      const trustedContext = await this.regenerate(trustedInput)
+      return {
+        trustedContext,
+        response: this.validResponse({
+          profile,
+          searchInputs,
+          trustedContext,
+          reviewedAt: profile.selectionReviewedAt,
+        }),
+      }
+    } catch (error) {
+      if (error instanceof TravelSelectionError && error.code === 'OFFER_IDS_UNSUPPORTED') {
+        return {
+          response: this.untrustedState(profile, 'invalid', 'OFFER_IDS_UNSUPPORTED', searchInputs),
+        }
+      }
+      return {
+        response: this.untrustedState(profile, 'invalid', 'REGENERATION_FAILED', searchInputs),
+      }
+    }
+  }
+
+  private async regenerate(
+    input: Parameters<NonNullable<TripTravelSelectionDependencies['buildTrustedContext']>>[0]
+  ): Promise<TrustedTravelBudgetContext> {
+    try {
+      return await this.buildTrustedContext(input)
+    } catch (error) {
+      if (error instanceof TrustedTravelContextError && error.code === 'OFFER_IDS_UNSUPPORTED') {
+        throw new TravelSelectionError('OFFER_IDS_UNSUPPORTED', error.message, 422)
+      }
+      throw error
     }
   }
 
   private validResponse(input: {
     profile: TripTravelProfile
     searchInputs: TravelSelectionSearchInputs
-    resolved: ResolvedPreview
+    trustedContext: TrustedTravelBudgetContext
     reviewedAt: Date
     selectedOutboundFlightId?: string
     selectedReturnFlightId?: string
     selectedHotelId?: string
   }): ValidTravelSelectionResponse {
-    const context = input.resolved.result.itineraryTravelContext
     return {
       state: 'valid',
       version: input.profile.selectionVersion,
@@ -462,14 +619,13 @@ export class TripTravelSelectionService {
       searchInputs: input.searchInputs,
       selectedOutboundFlightId:
         input.selectedOutboundFlightId ?? input.profile.selectedOutboundFlightId!,
-      selectedReturnFlightId:
-        input.selectedReturnFlightId ?? input.profile.selectedReturnFlightId!,
+      selectedReturnFlightId: input.selectedReturnFlightId ?? input.profile.selectedReturnFlightId!,
       selectedHotelId: input.selectedHotelId ?? input.profile.selectedHotelId!,
-      flightSearch: input.resolved.result.flightSearch,
-      hotelSearch: input.resolved.result.hotelSearch,
-      budgetSummary: input.resolved.result.budgetSummary,
-      itineraryTravelContext: context,
-      planningPreview: input.resolved.result.planningPreview,
+      flightSearch: input.trustedContext.flightSearch,
+      hotelSearch: input.trustedContext.hotelSearch,
+      budgetSummary: input.trustedContext.budgetSummary,
+      itineraryTravelContext: input.trustedContext.itineraryTravelContext,
+      planningPreview: input.trustedContext.itineraryTravelContext.planningPreview,
       message: 'Your reviewed sample travel options have been restored.',
     }
   }

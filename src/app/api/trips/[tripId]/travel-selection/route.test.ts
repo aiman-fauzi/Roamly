@@ -53,8 +53,9 @@ const validSelection = {
 function authenticatedSession(userId = 'user-1') {
   vi.mocked(createClient).mockResolvedValue({
     auth: {
-      getSession: vi.fn().mockResolvedValue({
-        data: { session: { user: { id: userId, email: `${userId}@example.com` } } },
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: userId, email: `${userId}@example.com` } },
+        error: null,
       }),
     },
   } as never)
@@ -72,17 +73,25 @@ describe('trip travel selection route', () => {
   })
 
   it('loads only the authenticated owner selection', async () => {
-    const response = await GET(new Request('http://localhost/api/trips/trip-1/travel-selection'), context)
+    const response = await GET(
+      new Request('http://localhost/api/trips/trip-1/travel-selection'),
+      context
+    )
 
     expect(response.status).toBe(200)
-    expect(routeMocks.get).toHaveBeenCalledWith({ tripId: 'trip-1', userId: 'user-1' })
+    expect(routeMocks.get).toHaveBeenCalledWith(
+      expect.objectContaining({ tripId: 'trip-1', userId: 'user-1' })
+    )
   })
 
   it('does not reveal another user trip or call the selection service', async () => {
     authenticatedSession('other-user')
     vi.mocked(getTripById).mockResolvedValue(null)
 
-    const response = await GET(new Request('http://localhost/api/trips/trip-1/travel-selection'), context)
+    const response = await GET(
+      new Request('http://localhost/api/trips/trip-1/travel-selection'),
+      context
+    )
     const body = await response.json()
 
     expect(response.status).toBe(404)
@@ -100,11 +109,13 @@ describe('trip travel selection route', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(routeMocks.save).toHaveBeenCalledWith({
-      tripId: 'trip-1',
-      userId: 'user-1',
-      selection: validSelection,
-    })
+    expect(routeMocks.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tripId: 'trip-1',
+        userId: 'user-1',
+        selection: validSelection,
+      })
+    )
   })
 
   it('rejects malformed dates before invoking deterministic regeneration', async () => {
@@ -122,18 +133,19 @@ describe('trip travel selection route', () => {
 
   it('clears with optimistic concurrency version', async () => {
     const response = await DELETE(
-      new Request(
-        'http://localhost/api/trips/trip-1/travel-selection?expectedVersion=1',
-        { method: 'DELETE' }
-      ),
+      new Request('http://localhost/api/trips/trip-1/travel-selection?expectedVersion=1', {
+        method: 'DELETE',
+      }),
       context
     )
 
     expect(response.status).toBe(200)
-    expect(routeMocks.clear).toHaveBeenCalledWith({
-      tripId: 'trip-1',
-      userId: 'user-1',
-      expectedVersion: 1,
-    })
+    expect(routeMocks.clear).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tripId: 'trip-1',
+        userId: 'user-1',
+        expectedVersion: 1,
+      })
+    )
   })
 })

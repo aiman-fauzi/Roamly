@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { createClient } from '@/lib/supabase/server'
+import { requireApiUser } from '@/app/api/authRouteUtils'
 import { deleteTrip, getTripById, ServiceError } from '@/services/tripService'
 import { ensureUser } from '@/services/userService'
 import type { ApiErrorResponse } from '@/types/api'
@@ -15,16 +15,12 @@ function err(error: string, code: string, status: number) {
 
 export async function GET(_request: Request, { params }: RouteContext) {
   const { tripId } = await params
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return err('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   try {
-    await ensureUser(session.user.id, session.user.email)
-    const trip = await getTripById(tripId, session.user.id)
+    await ensureUser(auth.user.id, auth.user.email)
+    const trip = await getTripById(tripId, auth.user.id)
     if (!trip) return err('Trip not found', 'NOT_FOUND', 404)
     return NextResponse.json(trip)
   } catch {
@@ -34,16 +30,12 @@ export async function GET(_request: Request, { params }: RouteContext) {
 
 export async function DELETE(_request: Request, { params }: RouteContext) {
   const { tripId } = await params
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return err('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   try {
-    await ensureUser(session.user.id, session.user.email)
-    await deleteTrip(tripId, session.user.id)
+    await ensureUser(auth.user.id, auth.user.email)
+    await deleteTrip(tripId, auth.user.id)
     return NextResponse.json({ ok: true })
   } catch (error) {
     if (error instanceof ServiceError) {

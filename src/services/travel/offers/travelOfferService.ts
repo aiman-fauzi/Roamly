@@ -1,5 +1,11 @@
-import { MockFlightOfferProvider, MockHotelOfferProvider } from '@/services/travel/offers/mockProviders'
-import { buildOfferSearchFingerprint, InMemoryOfferCache } from '@/services/travel/offers/offerCache'
+import {
+  MockFlightOfferProvider,
+  MockHotelOfferProvider,
+} from '@/services/travel/offers/mockProviders'
+import {
+  buildOfferSearchFingerprint,
+  InMemoryOfferCache,
+} from '@/services/travel/offers/offerCache'
 import type {
   FlightOfferProvider,
   FlightSearchRequest,
@@ -17,6 +23,7 @@ export interface TravelOfferServiceOptions {
   flightTtlSeconds?: number
   hotelTtlSeconds?: number
   maxPayloadBytes?: number
+  maxCacheEntries?: number
   now?: () => Date
 }
 
@@ -27,6 +34,7 @@ export interface SearchOptions {
 const DEFAULT_FLIGHT_TTL_SECONDS = 15 * 60
 const DEFAULT_HOTEL_TTL_SECONDS = 15 * 60
 const DEFAULT_MAX_PAYLOAD_BYTES = 256_000
+const DEFAULT_MAX_CACHE_ENTRIES = 64
 let defaultTravelOfferService: TravelOfferService | null = null
 
 function readPositiveInteger(value: string | undefined, fallback: number): number {
@@ -88,8 +96,12 @@ export class TravelOfferService {
     this.now = options.now ?? (() => new Date())
     this.flightProvider = options.flightProvider ?? new MockFlightOfferProvider(this.now)
     this.hotelProvider = options.hotelProvider ?? new MockHotelOfferProvider(this.now)
-    this.flightCache = options.flightCache ?? new InMemoryOfferCache()
-    this.hotelCache = options.hotelCache ?? new InMemoryOfferCache()
+    const maxCacheEntries =
+      options.maxCacheEntries ??
+      readPositiveInteger(process.env.TRAVEL_OFFER_CACHE_MAX_ENTRIES, DEFAULT_MAX_CACHE_ENTRIES)
+    this.flightCache =
+      options.flightCache ?? new InMemoryOfferCache({ maxEntries: maxCacheEntries })
+    this.hotelCache = options.hotelCache ?? new InMemoryOfferCache({ maxEntries: maxCacheEntries })
     this.flightTtlSeconds =
       options.flightTtlSeconds ??
       readPositiveInteger(process.env.FLIGHT_OFFER_CACHE_TTL_SECONDS, DEFAULT_FLIGHT_TTL_SECONDS)
@@ -98,10 +110,16 @@ export class TravelOfferService {
       readPositiveInteger(process.env.HOTEL_OFFER_CACHE_TTL_SECONDS, DEFAULT_HOTEL_TTL_SECONDS)
     this.maxPayloadBytes =
       options.maxPayloadBytes ??
-      readPositiveInteger(process.env.TRAVEL_OFFER_CACHE_MAX_PAYLOAD_BYTES, DEFAULT_MAX_PAYLOAD_BYTES)
+      readPositiveInteger(
+        process.env.TRAVEL_OFFER_CACHE_MAX_PAYLOAD_BYTES,
+        DEFAULT_MAX_PAYLOAD_BYTES
+      )
   }
 
-  async searchFlights(request: FlightSearchRequest, options: SearchOptions = {}): Promise<FlightSearchResult> {
+  async searchFlights(
+    request: FlightSearchRequest,
+    options: SearchOptions = {}
+  ): Promise<FlightSearchResult> {
     const key = flightFingerprint(this.flightProvider.providerKey, request)
     const cached = await this.flightCache.getOrSet(
       key,
@@ -122,7 +140,10 @@ export class TravelOfferService {
     }
   }
 
-  async searchHotels(request: HotelSearchRequest, options: SearchOptions = {}): Promise<HotelSearchResult> {
+  async searchHotels(
+    request: HotelSearchRequest,
+    options: SearchOptions = {}
+  ): Promise<HotelSearchResult> {
     const key = hotelFingerprint(this.hotelProvider.providerKey, request)
     const cached = await this.hotelCache.getOrSet(
       key,

@@ -6,7 +6,10 @@ import {
   TripTravelSelectionService,
   type SaveTravelSelectionInput,
 } from '@/services/travel/persistence/tripTravelSelectionService'
-import type { TripTravelPlanningPreviewResult } from '@/services/travel/planning/tripTravelPlanningService'
+import {
+  TrustedTravelContextError,
+  type TrustedTravelBudgetContext,
+} from '@/services/travel/planning/trustedTravelSelectionContext'
 import type { Trip } from '@/types/trip'
 
 const trip: Trip = {
@@ -88,8 +91,10 @@ function profile(overrides: Partial<TripTravelProfile> = {}): TripTravelProfile 
   }
 }
 
-function planningPreview(): TripTravelPlanningPreviewResult {
+function trustedContext(): TrustedTravelBudgetContext {
   return {
+    fingerprint,
+    searchInputs: selection,
     flightSearch: {
       status: 'SUCCESS',
       provider: 'mock',
@@ -117,6 +122,19 @@ function planningPreview(): TripTravelPlanningPreviewResult {
         },
       ],
     },
+    selectedFlightOffer: {
+      id: 'flight-pair-1',
+      dataStatus: 'mock',
+      mockFlightPair: {
+        outboundFlightId: selection.selectedOutboundFlightId,
+        returnFlightId: selection.selectedReturnFlightId,
+      },
+    },
+    selectedHotelOffer: {
+      id: 'hotel-offer-1',
+      dataStatus: 'mock',
+      mockHotel: { hotelId: selection.selectedHotelId },
+    },
     itineraryTravelContext: {
       outboundFlight: { id: selection.selectedOutboundFlightId },
       returnFlight: { id: selection.selectedReturnFlightId },
@@ -126,41 +144,68 @@ function planningPreview(): TripTravelPlanningPreviewResult {
     },
     budgetSummary: { currency: 'MYR' },
     planningPreview: { strictCandidateIds: true },
-  } as unknown as TripTravelPlanningPreviewResult
+  } as unknown as TrustedTravelBudgetContext
 }
 
-function setup(options: {
-  currentProfile?: TripTravelProfile | null
-  updateCount?: number
-  preview?: TripTravelPlanningPreviewResult
-  ownedTrip?: Trip | null
-} = {}) {
-  const findUnique = vi.fn().mockResolvedValue(
-    options.currentProfile === undefined ? profile() : options.currentProfile
-  )
+function setup(
+  options: {
+    currentProfile?: TripTravelProfile | null
+    updateCount?: number
+    trusted?: TrustedTravelBudgetContext
+    ownedTrip?: Trip | null
+  } = {}
+) {
+  const findUnique = vi
+    .fn()
+    .mockResolvedValue(options.currentProfile === undefined ? profile() : options.currentProfile)
   const updateMany = vi.fn().mockResolvedValue({ count: options.updateCount ?? 1 })
-  const previewBudget = vi.fn().mockResolvedValue(options.preview ?? planningPreview())
+  const buildTrustedContext = vi.fn().mockResolvedValue(options.trusted ?? trustedContext())
+  const retrieveDestinations = vi.fn().mockResolvedValue({
+    cityId: 'city-1',
+    candidates: [],
+    clusters: [],
+    nearestNeighbors: [],
+  })
+  const buildPlanningPreview = vi.fn().mockReturnValue({
+    status: 'planning_preview',
+    strictCandidateIds: true,
+    rankedRecommendations: [],
+    arrivalDayRecommendations: [],
+    fullDayCandidateGroups: [],
+    finalDayRecommendations: [],
+  })
   const service = new TripTravelSelectionService({
     db: {
       tripTravelProfile: { findUnique, updateMany },
     } as never,
     getTrip: vi.fn().mockResolvedValue(options.ownedTrip === undefined ? trip : options.ownedTrip),
     getPreferenceSet: vi.fn().mockResolvedValue(preferences),
-    previewBudget,
+    buildTrustedContext,
+    getTravelInterests: vi.fn().mockResolvedValue(['nature']),
+    resolveCity: vi.fn().mockResolvedValue({
+      id: 'city-1',
+      name: 'Phu Quoc',
+      slug: 'phu-quoc',
+      countryName: 'Vietnam',
+      countrySlug: 'vietnam',
+      currencyCode: 'VND',
+    }),
+    retrieveDestinations,
+    buildPlanningPreview,
     now: () => new Date('2026-08-06T02:00:00.000Z'),
   })
-  return { service, findUnique, updateMany, previewBudget }
+  return { service, findUnique, updateMany, buildTrustedContext, retrieveDestinations }
 }
 
 describe('TripTravelSelectionService', () => {
   it('saves only trusted identifiers and server-created fingerprint metadata', async () => {
-    const { service, updateMany, previewBudget } = setup()
+    const { service, updateMany, buildTrustedContext } = setup()
 
     const result = await service.save({ tripId: trip.id, userId: trip.userId, selection })
 
     expect(result.state).toBe('valid')
     expect(result.version).toBe(1)
-    expect(previewBudget).toHaveBeenCalledTimes(2)
+    expect(buildTrustedContext).toHaveBeenCalledTimes(1)
     expect(updateMany).toHaveBeenCalledWith({
       where: { tripId: trip.id, selectionVersion: 0 },
       data: expect.objectContaining({
@@ -181,7 +226,9 @@ describe('TripTravelSelectionService', () => {
   })
 
   it('restores a valid selection from regenerated trusted offers', async () => {
-    const { service, previewBudget } = setup({ currentProfile: profile({ selectionVersion: 3 }) })
+    const { service, buildTrustedContext } = setup({
+      currentProfile: profile({ selectionVersion: 3 }),
+    })
 
     const result = await service.get({ tripId: trip.id, userId: trip.userId })
 
@@ -192,14 +239,14 @@ describe('TripTravelSelectionService', () => {
       selectedReturnFlightId: selection.selectedReturnFlightId,
       selectedHotelId: selection.selectedHotelId,
     })
-    expect(previewBudget).toHaveBeenCalledTimes(2)
+    expect(buildTrustedContext).toHaveBeenCalledTimes(1)
   })
 
   it.each([
     ['departure date', { departureDate: new Date('2026-09-13T00:00:00.000Z') }],
     ['traveller count', { adults: 3 }],
   ])('marks a changed %s stale without regenerating offers', async (_field, change) => {
-    const { service, previewBudget } = setup({
+    const { service, buildTrustedContext } = setup({
       currentProfile: profile(change),
     })
 
@@ -207,13 +254,17 @@ describe('TripTravelSelectionService', () => {
       state: 'stale',
       reasonCode: 'FINGERPRINT_MISMATCH',
     })
-    expect(previewBudget).not.toHaveBeenCalled()
+    expect(buildTrustedContext).not.toHaveBeenCalled()
   })
 
   it('returns invalid state when regenerated offers do not contain saved IDs', async () => {
-    const missing = planningPreview()
-    missing.flightSearch.offers = []
-    const { service } = setup({ preview: missing })
+    const { service, buildTrustedContext } = setup()
+    buildTrustedContext.mockRejectedValue(
+      new TrustedTravelContextError(
+        'OFFER_IDS_UNSUPPORTED',
+        'One or more selected sample travel options are no longer available.'
+      )
+    )
 
     const result = await service.get({ tripId: trip.id, userId: trip.userId })
 
@@ -259,5 +310,18 @@ describe('TripTravelSelectionService', () => {
         selectionVersion: { increment: 1 },
       }),
     })
+  })
+
+  it('loads destination recommendations lazily after validating the reviewed IDs', async () => {
+    const { service, buildTrustedContext, retrieveDestinations } = setup()
+
+    const result = await service.getPlanningPreview({ tripId: trip.id, userId: trip.userId })
+
+    expect(result).toMatchObject({
+      eligibleCandidates: 0,
+      planningPreview: { strictCandidateIds: true },
+    })
+    expect(buildTrustedContext).toHaveBeenCalledTimes(1)
+    expect(retrieveDestinations).toHaveBeenCalledTimes(1)
   })
 })

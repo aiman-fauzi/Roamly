@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 
-import { createClient } from '@/lib/supabase/server'
+import { requireAuthenticatedUser, ServerAuthError } from '@/lib/auth/serverAuth'
+import type { RequestTiming } from '@/lib/observability/requestTiming'
 import { ExchangeRateError } from '@/services/exchangeRateService'
 import type { TravelOfferResultStatus } from '@/services/travel/offers/types'
 import { TripOfferSelectionError } from '@/services/travel/persistence/tripOfferSelectionService'
@@ -37,23 +38,43 @@ export async function readJsonBody(
 }
 
 export async function requireAuthenticatedTrip(
-  tripId: string
+  tripId: string,
+  timing?: RequestTiming
 ): Promise<AuthenticatedTrip | { response: NextResponse }> {
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return { response: err('Unauthorised', 'UNAUTHORISED', 401) }
-
   try {
-    await ensureUser(session.user.id, session.user.email)
-    const trip = await getTripById(tripId, session.user.id)
+    const authenticate = () => requireAuthenticatedUser()
+    const user = timing
+      ? await timing.measure('authentication', authenticate)
+      : await authenticate()
+    const syncUser = () => ensureUser(user.id, user.email)
+    if (timing) await timing.measure('user_sync', syncUser)
+    else await syncUser()
+    const findTrip = () => getTripById(tripId, user.id)
+    const trip = timing ? await timing.measure('trip_ownership_lookup', findTrip) : await findTrip()
     if (!trip) return { response: err('Trip not found', 'NOT_FOUND', 404) }
-    return { trip, userId: session.user.id }
-  } catch {
+    return { trip, userId: user.id }
+  } catch (error) {
+    if (error instanceof ServerAuthError) {
+      return {
+        response: err(
+          error.status === 401 ? 'Unauthorised' : 'Authentication service unavailable',
+          error.status === 401 ? 'UNAUTHORISED' : 'AUTH_UNAVAILABLE',
+          error.status
+        ),
+      }
+    }
     return { response: err('Failed to authenticate trip', 'INTERNAL_ERROR', 500) }
   }
+}
+
+export function completeTimedResponse(
+  response: NextResponse,
+  timing: RequestTiming,
+  outcome: 'success' | 'error'
+): NextResponse {
+  response.headers.set('Server-Timing', timing.serverTiming())
+  timing.finish(outcome)
+  return response
 }
 
 export function offerStatusCode(status: TravelOfferResultStatus): number {
@@ -84,6 +105,5 @@ export function routeErrorResponse(error: unknown) {
     return err(error.message, error.code, error.status, error.details)
   }
 
-  const message = error instanceof Error ? error.message : 'Unknown travel planning error'
-  return err('Failed to plan trip travel', 'TRAVEL_PLANNING_FAILED', 500, { reason: message })
+  return err('Failed to plan trip travel', 'TRAVEL_PLANNING_FAILED', 500)
 }

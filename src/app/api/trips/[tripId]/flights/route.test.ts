@@ -51,8 +51,9 @@ describe('flight offer route', () => {
     vi.clearAllMocks()
     vi.mocked(createClient).mockResolvedValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: { user: { id: 'user-1', email: 'user@example.com' } } },
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: 'user-1', email: 'user@example.com' } },
+          error: null,
         }),
       },
     } as never)
@@ -81,7 +82,9 @@ describe('flight offer route', () => {
       provider: 'mock',
       fetchedAt: '2026-08-05T00:00:00.000Z',
       expiresAt: '2026-08-05T00:15:00.000Z',
-      offers: [{ id: 'flight-1', provider: 'mock', totalPrice: { amount: '100.00', currency: 'MYR' } }],
+      offers: [
+        { id: 'flight-1', provider: 'mock', totalPrice: { amount: '100.00', currency: 'MYR' } },
+      ],
       cacheStatus: 'MISS',
       requestFingerprint: 'fingerprint',
     })
@@ -90,7 +93,10 @@ describe('flight offer route', () => {
   it('requires authentication before searching', async () => {
     vi.mocked(createClient).mockResolvedValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({ data: { session: null } }),
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: null },
+          error: { name: 'AuthSessionMissingError', status: 400 },
+        }),
       },
     } as never)
 

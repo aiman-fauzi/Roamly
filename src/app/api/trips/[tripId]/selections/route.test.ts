@@ -32,8 +32,9 @@ describe('trip offer selections route', () => {
     vi.clearAllMocks()
     vi.mocked(createClient).mockResolvedValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: { user: { id: 'user-1', email: 'user@example.com' } } },
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: 'user-1', email: 'user@example.com' } },
+          error: null,
         }),
       },
     } as never)

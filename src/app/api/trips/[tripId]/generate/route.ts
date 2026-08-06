@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server'
 
-import { createClient } from '@/lib/supabase/server'
-import {
-  ExchangeRateError,
-} from '@/services/exchangeRateService'
+import { requireApiUser } from '@/app/api/authRouteUtils'
+import { ExchangeRateError } from '@/services/exchangeRateService'
 import {
   ItineraryGenerationError,
   ItineraryGenerationService,
@@ -31,7 +29,9 @@ function readNestedDetails(details: unknown): Record<string, unknown> | undefine
 }
 
 function readStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }
 
 function generationErrorMessage(error: ItineraryGenerationError): string {
@@ -62,18 +62,14 @@ function generationErrorMessage(error: ItineraryGenerationError): string {
 
 export async function POST(_request: Request, { params }: RouteContext) {
   const { tripId } = await params
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return err('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   try {
-    await ensureUser(session.user.id, session.user.email)
+    await ensureUser(auth.user.id, auth.user.email)
     const result = await new ItineraryGenerationService().generate({
       tripId,
-      userId: session.user.id,
+      userId: auth.user.id,
       persist: true,
     })
     return NextResponse.json({

@@ -45,8 +45,9 @@ describe('destination-aware itinerary generation route', () => {
     vi.clearAllMocks()
     vi.mocked(createClient).mockResolvedValue({
       auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: { session: { user: { id: 'user-1', email: 'user@example.com' } } },
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: 'user-1', email: 'user@example.com' } },
+          error: null,
         }),
       },
     } as never)
@@ -168,7 +169,9 @@ describe('destination-aware itinerary generation route', () => {
 
     expect(response.status).toBe(429)
     expect(body.code).toBe('AI_RATE_LIMITED')
-    expect(body.error).toBe('Itinerary generation is temporarily rate limited. Please try again shortly.')
+    expect(body.error).toBe(
+      'Itinerary generation is temporarily rate limited. Please try again shortly.'
+    )
     expect(body.details).toMatchObject({
       recoverable: true,
       category: 'AI_RATE_LIMITED',

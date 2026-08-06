@@ -19,6 +19,7 @@ import type {
   HotelSearchResult,
 } from '@/services/travel/offers/types'
 import type {
+  DestinationPlanningPreviewResponse,
   TravelSelectionResponse,
   TravelSelectionSearchInputs,
   ValidTravelSelectionResponse,
@@ -135,6 +136,44 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
   const [isEstimating, setIsEstimating] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
+  const [planningPreviewState, setPlanningPreviewState] = useState<
+    'idle' | 'loading' | 'ready' | 'error'
+  >('idle')
+  const [planningPreviewError, setPlanningPreviewError] = useState<string | null>(null)
+
+  async function loadPlanningPreview() {
+    setPlanningPreviewState('loading')
+    setPlanningPreviewError(null)
+    try {
+      const response = await fetch(API.tripPlanningPreview(trip.id))
+      const data = (await readResponseJson(response)) as
+        | DestinationPlanningPreviewResponse
+        | ApiErrorResponse
+        | null
+      if (!response.ok) {
+        const fallback =
+          response.status === 401
+            ? 'Your session expired. Sign in again to load destination recommendations.'
+            : response.status === 408 || response.status === 504
+              ? 'Destination recommendations timed out. Your reviewed travel selection is still saved.'
+              : 'Destination recommendations are temporarily unavailable. Your reviewed travel selection is unchanged.'
+        setPlanningPreviewError(parseError(data, fallback))
+        setPlanningPreviewState('error')
+        return
+      }
+
+      const preview = data as DestinationPlanningPreviewResponse
+      setTravelContext((current) =>
+        current ? { ...current, planningPreview: preview.planningPreview } : current
+      )
+      setPlanningPreviewState('ready')
+    } catch {
+      setPlanningPreviewError(
+        'Destination recommendations are temporarily unavailable. Your reviewed travel selection is unchanged.'
+      )
+      setPlanningPreviewState('error')
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -144,7 +183,10 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
       setError(null)
       try {
         const response = await fetch(API.tripTravelSelection(trip.id))
-        const data = (await readResponseJson(response)) as TravelSelectionResponse | ApiErrorResponse | null
+        const data = (await readResponseJson(response)) as
+          | TravelSelectionResponse
+          | ApiErrorResponse
+          | null
         if (cancelled) return
         if (!response.ok) {
           setSelectionState('invalid')
@@ -166,6 +208,7 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
           setSelectedHotelId(selection.selectedHotelId)
           setBudgetSummary(selection.budgetSummary)
           setTravelContext(selection.itineraryTravelContext)
+          void loadPlanningPreview()
         }
       } catch {
         if (!cancelled) {
@@ -240,6 +283,8 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
   function invalidateReviewedPlan(tripDetailsChanged = false) {
     setBudgetSummary(null)
     setTravelContext(null)
+    setPlanningPreviewState('idle')
+    setPlanningPreviewError(null)
     setGenerationStatus(null)
     if (selectionVersion > 0) {
       setSelectionState('stale')
@@ -352,7 +397,10 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
           expectedVersion: selectionVersion,
         }),
       })
-      const data = (await readResponseJson(response)) as TravelSelectionResponse | ApiErrorResponse | null
+      const data = (await readResponseJson(response)) as
+        | TravelSelectionResponse
+        | ApiErrorResponse
+        | null
       if (!response.ok) {
         setError(parseError(data, 'Unable to estimate the sample trip budget.'))
         return
@@ -372,6 +420,7 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
       setHotelSearch(reviewed.hotelSearch)
       setBudgetSummary(reviewed.budgetSummary)
       setTravelContext(reviewed.itineraryTravelContext)
+      void loadPlanningPreview()
       setGenerationStatus(null)
     } finally {
       setIsEstimating(false)
@@ -386,7 +435,10 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
         `${API.tripTravelSelection(trip.id)}?expectedVersion=${selectionVersion}`,
         { method: 'DELETE' }
       )
-      const data = (await readResponseJson(response)) as TravelSelectionResponse | ApiErrorResponse | null
+      const data = (await readResponseJson(response)) as
+        | TravelSelectionResponse
+        | ApiErrorResponse
+        | null
       if (!response.ok) {
         setError(parseError(data, 'Unable to clear the reviewed sample travel selection.'))
         return
@@ -403,6 +455,8 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
       setSelectedHotelId(null)
       setBudgetSummary(null)
       setTravelContext(null)
+      setPlanningPreviewState('idle')
+      setPlanningPreviewError(null)
       setGenerationStatus(null)
     } finally {
       setIsClearing(false)
@@ -690,7 +744,14 @@ export function TravelPlanningWorkspace({ trip, onComplete }: TravelPlanningWork
 
       {budgetSummary && !travelContext && <TripCostSummary budgetSummary={budgetSummary} />}
 
-      {travelContext && <TravelContextSummary context={travelContext} />}
+      {travelContext && (
+        <TravelContextSummary
+          context={travelContext}
+          planningPreviewState={planningPreviewState}
+          planningPreviewError={planningPreviewError}
+          onRetryPlanningPreview={loadPlanningPreview}
+        />
+      )}
     </section>
   )
 }

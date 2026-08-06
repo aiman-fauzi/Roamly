@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
-import { createClient } from '@/lib/supabase/server'
+import { requireApiUser } from '@/app/api/authRouteUtils'
 import { profileUpdateSchema } from '@/lib/validations/profileValidation'
 import {
   ensureProfile,
@@ -22,28 +22,26 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value.trim().length > 0 ? value : null
 }
 
-async function ensureSessionProfile(session: {
-  user: { id: string; email?: string; user_metadata: Record<string, unknown> }
+async function ensureSessionProfile(user: {
+  id: string
+  email?: string
+  user_metadata: Record<string, unknown>
 }) {
-  const metadata = session.user.user_metadata
+  const metadata = user.user_metadata
   const displayName = metadataString(metadata, 'full_name') ?? metadataString(metadata, 'name')
   const avatarUrl = metadataString(metadata, 'avatar_url') ?? metadataString(metadata, 'picture')
 
-  await ensureUser(session.user.id, session.user.email)
-  return ensureProfile(session.user.id, displayName, avatarUrl, session.user.email)
+  await ensureUser(user.id, user.email)
+  return ensureProfile(user.id, displayName, avatarUrl, user.email)
 }
 
 export async function GET() {
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return errorResponse('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   try {
-    if (!(await getProfile(session.user.id))) await ensureSessionProfile(session)
-    const summary = await getProfileSummary(session.user.id)
+    if (!(await getProfile(auth.user.id))) await ensureSessionProfile(auth.user)
+    const summary = await getProfileSummary(auth.user.id)
     return NextResponse.json(summary)
   } catch {
     return errorResponse('Failed to fetch profile', 'INTERNAL_ERROR', 500)
@@ -51,12 +49,8 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return errorResponse('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   let body: unknown
   try {
@@ -76,9 +70,9 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    await ensureSessionProfile(session)
-    await updateProfileDetails(session.user.id, parsed.data)
-    const summary = await getProfileSummary(session.user.id)
+    await ensureSessionProfile(auth.user)
+    await updateProfileDetails(auth.user.id, parsed.data)
+    const summary = await getProfileSummary(auth.user.id)
     return NextResponse.json(summary)
   } catch (err) {
     if (err instanceof z.ZodError) {

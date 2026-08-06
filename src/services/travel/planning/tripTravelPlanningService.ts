@@ -625,7 +625,7 @@ function previousItineraryPreserved(trip: LoadedTrip): boolean {
   return Boolean(trip.itineraryJson)
 }
 
-interface PreparedTravelPlanningContext extends TripTravelPlanningPreviewResult {
+export interface FullItineraryPlanningContext extends TripTravelPlanningPreviewResult {
   preferences: RequiredPreferenceFields
   preferenceSet: PreferenceSet
   profile: ProfileForPlanning
@@ -685,7 +685,7 @@ export class TripTravelPlanningService {
   async previewBudget(
     options: TripTravelPlanningOptions
   ): Promise<TripTravelPlanningPreviewResult> {
-    return this.prepare(options, 'preview')
+    return this.buildFullItineraryPlanningContext(options, 'preview')
   }
 
   async plan(options: TripTravelPlanningOptions): Promise<TripTravelPlanningResult> {
@@ -702,7 +702,10 @@ export class TripTravelPlanningService {
     }
 
     try {
-      const prepared = await this.prepare(options, options.input.persist ? 'persist' : 'preview')
+      const prepared = await this.buildFullItineraryPlanningContext(
+        options,
+        options.input.persist ? 'persist' : 'preview'
+      )
       const request: GenerateItineraryRequest = {
         destination: prepared.preferences.destination,
         budget: prepared.preferences.budget,
@@ -831,10 +834,10 @@ export class TripTravelPlanningService {
     }
   }
 
-  private async prepare(
+  async buildFullItineraryPlanningContext(
     options: TripTravelPlanningOptions,
     mode: TripTravelPlanningMode
-  ): Promise<PreparedTravelPlanningContext> {
+  ): Promise<FullItineraryPlanningContext> {
     const trip = await this.dependencies.getTrip(options.tripId, options.userId)
     if (!trip) {
       throw new TravelPlanningError('TRIP_NOT_FOUND', 'Trip not found.', 404)

@@ -4,11 +4,15 @@ import { MockDataNotice } from './MockDataBadge'
 import { ArrivalDayNotice, DepartureDayNotice } from './TravelTimingNotice'
 import { TripCostSummary } from './TripCostSummary'
 
+import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import type { ItineraryTravelContext } from '@/services/travel/planning/liveTravelContext'
 
 interface TravelContextSummaryProps {
   context: ItineraryTravelContext
+  planningPreviewState?: 'idle' | 'loading' | 'ready' | 'error'
+  planningPreviewError?: string | null
+  onRetryPlanningPreview?: () => void
 }
 
 function areaLabel(value: string): string {
@@ -18,7 +22,12 @@ function areaLabel(value: string): string {
     .join(' / ')
 }
 
-export function TravelContextSummary({ context }: TravelContextSummaryProps) {
+export function TravelContextSummary({
+  context,
+  planningPreviewState = 'ready',
+  planningPreviewError,
+  onRetryPlanningPreview,
+}: TravelContextSummaryProps) {
   return (
     <section className="space-y-4" aria-label="Selected sample travel plan">
       <Card className="space-y-3">
@@ -58,34 +67,55 @@ export function TravelContextSummary({ context }: TravelContextSummaryProps) {
             Hotel area: {areaLabel(context.hotelArea)}
           </span>
         </div>
-        <div className="grid gap-3 text-sm text-neutral-700 md:grid-cols-3">
-          <div>
-            <p className="font-semibold text-neutral-900">Arrival day</p>
-            <ul className="mt-2 space-y-1">
-              {context.planningPreview.arrivalDayRecommendations.slice(0, 3).map((candidate) => (
-                <li key={candidate.candidateId}>{candidate.name}</li>
-              ))}
-            </ul>
+        {planningPreviewState === 'loading' && (
+          <div className="space-y-2" role="status" aria-live="polite">
+            <p className="text-sm text-neutral-700">Loading destination recommendations...</p>
+            <div className="h-2 w-full animate-pulse rounded bg-neutral-100" />
+            <div className="h-2 w-2/3 animate-pulse rounded bg-neutral-100" />
           </div>
-          <div>
-            <p className="font-semibold text-neutral-900">Full-day groups</p>
-            <ul className="mt-2 space-y-1">
-              {context.planningPreview.fullDayCandidateGroups.slice(0, 3).map((group) => (
-                <li key={group.areaGroup}>
-                  {areaLabel(group.areaGroup)} - {group.candidates.length}
-                </li>
-              ))}
-            </ul>
+        )}
+        {planningPreviewState === 'error' && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p role="alert" className="text-sm text-error-500">
+              {planningPreviewError ?? 'Destination recommendations are temporarily unavailable.'}
+            </p>
+            {onRetryPlanningPreview && (
+              <Button variant="outline" onClick={onRetryPlanningPreview}>
+                Retry recommendations
+              </Button>
+            )}
           </div>
-          <div>
-            <p className="font-semibold text-neutral-900">Final morning</p>
-            <ul className="mt-2 space-y-1">
-              {context.planningPreview.finalDayRecommendations.slice(0, 3).map((candidate) => (
-                <li key={candidate.candidateId}>{candidate.name}</li>
-              ))}
-            </ul>
+        )}
+        {planningPreviewState === 'ready' && (
+          <div className="grid gap-3 text-sm text-neutral-700 md:grid-cols-3">
+            <div>
+              <p className="font-semibold text-neutral-900">Arrival day</p>
+              <ul className="mt-2 space-y-1">
+                {context.planningPreview.arrivalDayRecommendations.slice(0, 3).map((candidate) => (
+                  <li key={candidate.candidateId}>{candidate.name}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-neutral-900">Full-day groups</p>
+              <ul className="mt-2 space-y-1">
+                {context.planningPreview.fullDayCandidateGroups.slice(0, 3).map((group) => (
+                  <li key={group.areaGroup}>
+                    {areaLabel(group.areaGroup)} - {group.candidates.length}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="font-semibold text-neutral-900">Final morning</p>
+              <ul className="mt-2 space-y-1">
+                {context.planningPreview.finalDayRecommendations.slice(0, 3).map((candidate) => (
+                  <li key={candidate.candidateId}>{candidate.name}</li>
+                ))}
+              </ul>
+            </div>
           </div>
-        </div>
+        )}
       </Card>
     </section>
   )

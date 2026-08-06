@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { createClient } from '@/lib/supabase/server'
+import { requireApiUser } from '@/app/api/authRouteUtils'
 import { preferenceSetInputSchema } from '@/lib/validations/questionnaireValidation'
 import { upsertPreferenceSet } from '@/services/preferenceService'
 import { getTripById } from '@/services/tripService'
@@ -17,12 +17,8 @@ function err(error: string, code: string, status: number, details?: unknown) {
 
 export async function POST(request: Request, { params }: RouteContext) {
   const { tripId } = await params
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return err('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   let body: unknown
   try {
@@ -33,12 +29,17 @@ export async function POST(request: Request, { params }: RouteContext) {
 
   const parsed = preferenceSetInputSchema.safeParse(body)
   if (!parsed.success) {
-    return err('Questionnaire answers are invalid.', 'VALIDATION_ERROR', 400, parsed.error.flatten())
+    return err(
+      'Questionnaire answers are invalid.',
+      'VALIDATION_ERROR',
+      400,
+      parsed.error.flatten()
+    )
   }
 
   try {
-    await ensureUser(session.user.id, session.user.email)
-    const trip = await getTripById(tripId, session.user.id)
+    await ensureUser(auth.user.id, auth.user.email)
+    const trip = await getTripById(tripId, auth.user.id)
     if (!trip) return err('Trip not found', 'NOT_FOUND', 404)
 
     const preferenceSet = await upsertPreferenceSet(tripId, parsed.data)

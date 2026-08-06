@@ -32,20 +32,19 @@ vi.mock('next/navigation', () => ({
 }))
 
 describe('QuestionnairePage', () => {
-  const getSession = vi.fn()
+  const getUser = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(createClient).mockResolvedValue({ auth: { getSession } } as never)
-    getSession.mockResolvedValue({
+    vi.mocked(createClient).mockResolvedValue({ auth: { getUser } } as never)
+    getUser.mockResolvedValue({
       data: {
-        session: {
-          user: {
-            id: 'owner-user-id',
-            email: 'owner@example.com',
-          },
+        user: {
+          id: 'owner-user-id',
+          email: 'owner@example.com',
         },
       },
+      error: null,
     })
     vi.mocked(ensureUser).mockResolvedValue({ id: 'owner-user-id' } as never)
     vi.mocked(getTripById).mockResolvedValue({ id: 'trip-id' } as never)
@@ -74,11 +73,13 @@ describe('QuestionnairePage', () => {
   })
 
   it('redirects unauthenticated requests to login with next path', async () => {
-    getSession.mockResolvedValue({ data: { session: null } })
+    getUser.mockResolvedValue({
+      data: { user: null },
+      error: { name: 'AuthSessionMissingError', status: 400 },
+    })
 
     await expect(
       QuestionnairePage({ params: Promise.resolve({ tripId: 'trip-id' }) })
     ).rejects.toThrow('NEXT_REDIRECT:/login?next=%2Ftrips%2Ftrip-id%2Fquestionnaire')
   })
 })
-

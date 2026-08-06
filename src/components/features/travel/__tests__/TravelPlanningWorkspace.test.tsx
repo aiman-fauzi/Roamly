@@ -151,6 +151,9 @@ describe('TravelPlanningWorkspace', () => {
       if (url.endsWith('/travel-selection') && init?.method === 'PUT') {
         return Response.json(reviewed)
       }
+      if (url.endsWith('/planning-preview')) {
+        return Response.json({ planningPreview: reviewed.planningPreview })
+      }
       return Response.json({ error: 'Unexpected request' }, { status: 500 })
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -182,7 +185,11 @@ describe('TravelPlanningWorkspace', () => {
   it('restores reviewed selections after remount and keeps the budget consistent', async () => {
     const { flights, hotels } = await travelFixtures()
     const restored = validSelectionResponse(flights, hotels, 3)
-    const fetchMock = vi.fn(async () => Response.json(restored))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/planning-preview')
+        ? Response.json({ planningPreview: restored.planningPreview })
+        : Response.json(restored)
+    )
     vi.stubGlobal('fetch', fetchMock)
 
     const first = render(<TravelPlanningWorkspace trip={trip} onComplete={vi.fn()} />)
@@ -198,15 +205,19 @@ describe('TravelPlanningWorkspace', () => {
       await screen.findByText('Your reviewed sample travel options have been restored.')
     ).toBeVisible()
     expect(screen.getByText('MYR 2,949.1')).toBeVisible()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
   it('clears a restored reviewed selection and removes its trusted budget', async () => {
     const { flights, hotels } = await travelFixtures()
     const restored = validSelectionResponse(flights, hotels, 3)
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
-      Response.json(init?.method === 'DELETE' ? { state: 'none', version: 4 } : restored)
-    )
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return Response.json({ state: 'none', version: 4 })
+      if (String(input).endsWith('/planning-preview')) {
+        return Response.json({ planningPreview: restored.planningPreview })
+      }
+      return Response.json(restored)
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     render(<TravelPlanningWorkspace trip={trip} onComplete={vi.fn()} />)
@@ -231,8 +242,7 @@ describe('TravelPlanningWorkspace', () => {
           state: 'stale',
           version: 2,
           reasonCode: 'FINGERPRINT_MISMATCH',
-          message:
-            'Your trip details changed, so please review the latest sample travel options.',
+          message: 'Your trip details changed, so please review the latest sample travel options.',
           searchInputs: {
             originAirportCode: 'KUL',
             destinationAirportCode: 'PQC',
@@ -257,5 +267,38 @@ describe('TravelPlanningWorkspace', () => {
     expect(screen.getByRole('spinbutton', { name: 'Travellers' })).toHaveValue(3)
     expect(screen.queryByText('Estimated whole trip')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Generate itinerary' })).toBeDisabled()
+  })
+
+  it('keeps restored travel usable when lazy recommendations fail and retries separately', async () => {
+    const { flights, hotels } = await travelFixtures()
+    const restored = validSelectionResponse(flights, hotels, 2)
+    let previewAttempts = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/planning-preview')) {
+        previewAttempts += 1
+        if (previewAttempts === 1) {
+          return Response.json(
+            { error: 'Destination recommendations are temporarily unavailable.' },
+            { status: 503 }
+          )
+        }
+        return Response.json({ planningPreview: restored.planningPreview })
+      }
+      return Response.json(restored)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<TravelPlanningWorkspace trip={trip} onComplete={vi.fn()} />)
+
+    expect(await screen.findByText('Estimated whole trip')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Generate itinerary' })).toBeEnabled()
+    expect(
+      await screen.findByText('Destination recommendations are temporarily unavailable.')
+    ).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry recommendations' }))
+    await waitFor(() => expect(previewAttempts).toBe(2))
+    expect(screen.queryByRole('button', { name: 'Retry recommendations' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generate itinerary' })).toBeEnabled()
   })
 })

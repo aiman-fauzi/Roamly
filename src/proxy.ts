@@ -9,8 +9,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/profile') ||
     pathname.startsWith('/trips')
 
-  const isProtectedApi =
-    pathname.startsWith('/api/') && !pathname.startsWith('/api/auth/callback')
+  const isProtectedApi = pathname.startsWith('/api/') && !pathname.startsWith('/api/auth/callback')
 
   const isAuthPage = pathname === '/login' || pathname === '/register'
 
@@ -50,16 +49,16 @@ export async function proxy(request: NextRequest) {
   })
 
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
+    data: { user },
+  } = await supabase.auth.getUser()
 
-  if ((isProtectedPage || isProtectedApi) && !session) {
+  if ((isProtectedPage || isProtectedApi) && !user) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
     return NextResponse.redirect(loginUrl)
   }
 
-  if (isAuthPage && session) {
+  if (isAuthPage && user) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

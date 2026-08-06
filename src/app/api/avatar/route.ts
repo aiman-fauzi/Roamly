@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { createClient } from '@/lib/supabase/server'
+import { requireApiUser } from '@/app/api/authRouteUtils'
 import { validateAvatarFile } from '@/lib/validations/avatarValidation'
 import { ensureProfile, ServiceError, updateAvatar } from '@/services/profileService'
 import { ensureUser } from '@/services/userService'
@@ -11,12 +11,8 @@ function errorResponse(error: string, code: string, status: number) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient()
-  const {
-    data: { session },
-  } = await supabase.auth.getSession()
-
-  if (!session) return errorResponse('Unauthorised', 'UNAUTHORISED', 401)
+  const auth = await requireApiUser()
+  if (!auth.user) return auth.response
 
   let formData: FormData
   try {
@@ -36,9 +32,9 @@ export async function POST(request: Request) {
   }
 
   try {
-    await ensureUser(session.user.id, session.user.email)
-    await ensureProfile(session.user.id, null, null, session.user.email)
-    const profile = await updateAvatar(session.user.id, file)
+    await ensureUser(auth.user.id, auth.user.email)
+    await ensureProfile(auth.user.id, null, null, auth.user.email)
+    const profile = await updateAvatar(auth.user.id, file)
     return NextResponse.json({ avatarUrl: profile.avatarUrl })
   } catch (err) {
     if (err instanceof ServiceError) {

@@ -18,5 +18,6 @@ export const API = {
   tripHotels: (tripId: string) => `/api/trips/${tripId}/hotels`,
   tripBudget: (tripId: string) => `/api/trips/${tripId}/budget`,
   tripTravelSelection: (tripId: string) => `/api/trips/${tripId}/travel-selection`,
+  tripPlanningPreview: (tripId: string) => `/api/trips/${tripId}/planning-preview`,
   tripPlan: (tripId: string) => `/api/trips/${tripId}/plan`,
 } as const
