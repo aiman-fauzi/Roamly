@@ -12,14 +12,14 @@ import { TripTravelSearchRequestError } from '@/services/travel/profile/tripTrav
 import { getTripById } from '@/services/tripService'
 import { ensureUser } from '@/services/userService'
 import type { ApiErrorResponse } from '@/types/api'
-import type { TripWithPreferences } from '@/types/trip'
+import type { TripWithTravelProfile } from '@/types/trip'
 
 export interface RouteContext {
   params: Promise<{ tripId: string }>
 }
 
 export interface AuthenticatedTrip {
-  trip: TripWithPreferences
+  trip: TripWithTravelProfile
   userId: string
 }
 

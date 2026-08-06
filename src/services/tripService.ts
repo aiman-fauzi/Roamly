@@ -1,7 +1,7 @@
 import { TripStatus } from '@prisma/client'
 
 import { prisma } from '@/db/client'
-import type { Trip, TripWithPreferences } from '@/types/trip'
+import type { Trip, TripWithPreferences, TripWithTravelProfile } from '@/types/trip'
 
 export { TripStatus }
 
@@ -56,10 +56,10 @@ export async function getUserTrips(userId: string): Promise<TripWithPreferences[
 export async function getTripById(
   tripId: string,
   userId: string
-): Promise<TripWithPreferences | null> {
+): Promise<TripWithTravelProfile | null> {
   return prisma.trip.findFirst({
     where: { id: tripId, userId },
-    include: { preferenceSet: true },
+    include: { preferenceSet: true, travelProfile: true },
   })
 }
 

@@ -1,4 +1,4 @@
-import type { TripStatus } from '@prisma/client'
+import type { TripStatus, TripTravelProfile } from '@prisma/client'
 
 export type { TripStatus }
 
@@ -30,6 +30,10 @@ export interface PreferenceSet {
 
 export interface TripWithPreferences extends Trip {
   preferenceSet: PreferenceSet | null
+}
+
+export interface TripWithTravelProfile extends TripWithPreferences {
+  travelProfile: TripTravelProfile | null
 }
 
 /** Input type for creating / upserting a PreferenceSet */

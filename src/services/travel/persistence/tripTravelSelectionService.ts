@@ -74,9 +74,13 @@ export interface DestinationPlanningPreviewResponse {
 
 export type TravelSelectionResponse = TravelSelectionBaseResponse | ValidTravelSelectionResponse
 
+type SelectionOwnedTrip = TripWithPreferences & {
+  travelProfile?: TripTravelProfile | null
+}
+
 interface TripTravelSelectionDependencies {
   db?: typeof prisma
-  getTrip?: (tripId: string, userId: string) => Promise<TripWithPreferences | null>
+  getTrip?: (tripId: string, userId: string) => Promise<SelectionOwnedTrip | null>
   getPreferenceSet?: (tripId: string) => Promise<PreferenceSet | null>
   getTravelInterests?: (userId: string) => Promise<string[]>
   resolveCity?: (destination: string) => Promise<DestinationCityResolution | null>
@@ -104,7 +108,7 @@ interface TripTravelSelectionDependencies {
 }
 
 interface OwnedSelectionContext {
-  trip: TripWithPreferences
+  trip: SelectionOwnedTrip
   profile: TripTravelProfile | null
   preferences: PreferenceSet
 }
@@ -262,7 +266,7 @@ export class TripTravelSelectionService {
   async get(input: {
     tripId: string
     userId: string
-    ownedTrip?: TripWithPreferences
+    ownedTrip?: SelectionOwnedTrip
     timing?: RequestTiming
   }): Promise<TravelSelectionResponse> {
     input.timing?.record('destination_retrieval', 0)
@@ -273,7 +277,7 @@ export class TripTravelSelectionService {
   async save(input: {
     tripId: string
     userId: string
-    ownedTrip?: TripWithPreferences
+    ownedTrip?: SelectionOwnedTrip
     selection: SaveTravelSelectionInput
     timing?: RequestTiming
   }): Promise<ValidTravelSelectionResponse> {
@@ -351,7 +355,7 @@ export class TripTravelSelectionService {
   async clear(input: {
     tripId: string
     userId: string
-    ownedTrip?: TripWithPreferences
+    ownedTrip?: SelectionOwnedTrip
     expectedVersion: number
     timing?: RequestTiming
   }): Promise<TravelSelectionResponse> {
@@ -397,7 +401,7 @@ export class TripTravelSelectionService {
   async getPlanningPreview(input: {
     tripId: string
     userId: string
-    ownedTrip?: TripWithPreferences
+    ownedTrip?: SelectionOwnedTrip
     timing?: RequestTiming
   }): Promise<DestinationPlanningPreviewResponse> {
     const context = await this.loadOwnedContext(input)
@@ -466,7 +470,7 @@ export class TripTravelSelectionService {
   private async loadOwnedContext(input: {
     tripId: string
     userId: string
-    ownedTrip?: TripWithPreferences
+    ownedTrip?: SelectionOwnedTrip
     timing?: RequestTiming
   }): Promise<OwnedSelectionContext> {
     const tripWork = () => this.getTrip(input.tripId, input.userId)
@@ -481,7 +485,9 @@ export class TripTravelSelectionService {
 
     const load = () =>
       Promise.all([
-        this.db.tripTravelProfile.findUnique({ where: { tripId: input.tripId } }),
+        trip.travelProfile !== undefined
+          ? Promise.resolve(trip.travelProfile)
+          : this.db.tripTravelProfile.findUnique({ where: { tripId: input.tripId } }),
         trip.preferenceSet
           ? Promise.resolve(trip.preferenceSet)
           : this.getPreferenceSet(input.tripId),
