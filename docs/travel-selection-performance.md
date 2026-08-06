@@ -11,6 +11,10 @@
 Cold and warm results are reported separately because Vercel functions and their database
 connections may start cold.
 
+Production functions run in `sin1`, aligned with the Supabase `ap-southeast-1` database and the
+primary ASEAN user base. This avoids placing every verified-auth and ownership query on the
+previous `iad1` to Singapore network path.
+
 ## Call graph before optimization
 
 ```text
