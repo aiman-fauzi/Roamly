@@ -2,7 +2,7 @@
 
 > **Project:** Roamly - AI-Powered Travel Planning SaaS
 > **Tagline:** Plan Less. Explore More.
-> **Last Updated:** 2026-08-06
+> **Last Updated:** 2026-08-07
 > **Stack:** Next.js 16, TypeScript, Tailwind CSS, Supabase, Prisma, Google Gemini
 
 ---
@@ -22,6 +22,16 @@
 ---
 
 ## Completed In This Pass
+
+### Itinerary Revision History and Animated Map
+
+- Added additive `ItineraryRevision` persistence with atomic pre-mutation snapshots, configurable newest-20 retention, server-derived action metadata, and active-candidate validation.
+- Added owner-scoped revision list, sanitized preview, explicit restore, and quick undo APIs while preserving `itineraryEditVersion` compare-and-swap behavior.
+- Added the responsive revision-history UI with compact comparisons, restore confirmation, optimistic rollback, and immediate editor/map refresh.
+- Added a provider-neutral map adapter with Leaflet and OpenStreetMap tiles, explicit attribution, numbered day/stop markers, ordered day lines, lock and selection states, and synchronized itinerary cards.
+- Added play, pause, previous, next, restart, day emphasis, reduced-motion handling, mobile full-screen mode, and resilient empty/offline/provider-failure states.
+- Added privacy-safe revision operation metrics and client map diagnostics without itinerary content, destination identity, coordinates, trip IDs, or user IDs.
+- Added revision transaction/service tests, editor integration tests, map contract/component tests, and a Strict Mode map lifecycle regression test.
 
 ### Production Observability and Itinerary Editing
 
@@ -98,9 +108,9 @@ Current unit coverage verifies questionnaire validation/serialization and range/
 |---------|--------|-------|
 | `npm run db:generate` | Passed | Prisma Client generated from `src/db/schema.prisma` |
 | `npm run typecheck` | Passed | `tsc --noEmit` |
-| `npm run lint` | Passed | 2 existing console warnings in destination audit files |
-| `npm run test` | Passed | 37 files, 175 tests |
-| `npm run build` | Passed | Next.js 16.2.9 production build |
+| `npm run lint` | Passed | 5 existing console warnings in destination pipeline/audit files; 0 errors |
+| `npm run test` | Passed | 57 files, 340 tests |
+| `npm run build` | Passed | Next.js 16.3.0 production build |
 | `npm audit --omit=dev` | Passed | Production dependency tree reports 0 vulnerabilities |
 | Local dev server | Passed | `http://localhost:3000/` returned HTTP 200 after elevated persistent launch |
 | Local production server | Passed | `next start -p 3210` returned HTTP 200 |
@@ -115,6 +125,6 @@ These are not blocked by source stubs, but they require configured services or b
 - Run a real Supabase-backed registration/login/profile/trip flow.
 - Run AI generation with a valid `GEMINI_API_KEY` and `GEMINI_MODEL` and confirm timeout/schema-error behavior.
 - Add and run Playwright E2E coverage for register, login, questionnaire, itinerary, delete, and empty state.
-- Perform browser responsive QA at 375px, 768px, and 1440px.
+- Extend browser E2E coverage beyond the completed itinerary editor/map QA at 375px, 768px, and 1440px.
 - Perform an accessibility audit with an axe/Playwright pass.
 - Review remaining full `npm audit` advisories in dev tooling: Vitest/Vite/esbuild/tsx. Production audit is clean; npm's forced upgrade path failed with `Invalid Version` in this dependency tree.

@@ -3,15 +3,19 @@
 import {
   AlertTriangle,
   Check,
+  History,
   Image as ImageIcon,
   LoaderCircle,
   RefreshCw,
+  Undo2,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { EditableDayCard } from '@/components/features/itinerary/EditableDayCard'
 import { ItineraryHeader } from '@/components/features/itinerary/ItineraryHeader'
+import { ItineraryHistoryDialog } from '@/components/features/itinerary/ItineraryHistoryDialog'
+import { ItineraryMap } from '@/components/features/itinerary/ItineraryMap'
 import { ItineraryTimeline } from '@/components/features/itinerary/ItineraryTimeline'
 import { TravelContextSummary } from '@/components/features/travel/TravelContextSummary'
 import { Button } from '@/components/ui/Button'
@@ -24,6 +28,8 @@ import type {
   ItineraryItem,
   ItineraryPeriod,
   ItineraryReplacementOption,
+  ItineraryRevisionPreview,
+  ItineraryRevisionSummary,
 } from '@/types/itinerary'
 
 interface ItineraryEditorProps {
@@ -250,6 +256,29 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
   const [loadingReplacements, setLoadingReplacements] = useState(false)
   const [confirmDay, setConfirmDay] = useState<number | null>(null)
   const [fallbackDay, setFallbackDay] = useState<DayPlan | null>(null)
+  const [revisions, setRevisions] = useState<ItineraryRevisionSummary[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [preview, setPreview] = useState<ItineraryRevisionPreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
+
+  const loadRevisions = useCallback(async () => {
+    setHistoryLoading(true)
+    try {
+      const response = await fetch(API.tripItineraryRevisions(tripId), { cache: 'no-store' })
+      const body = await readResponse<{ revisions: ItineraryRevisionSummary[] }>(response)
+      setRevisions(body.revisions)
+      return body.revisions
+    } catch (error) {
+      setSaveState('error')
+      setSaveMessage(error instanceof Error ? error.message : 'Revision history could not be loaded.')
+      return []
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [tripId])
 
   const load = useCallback(async () => {
     setLoadError(null)
@@ -257,16 +286,30 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
       const response = await fetch(API.tripItineraryEditor(tripId), { cache: 'no-store' })
       setDocument(await readResponse<ItineraryEditorDocument>(response))
       setSaveState('idle')
+      void loadRevisions()
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Failed to load itinerary editor.')
     }
-  }, [tripId])
+  }, [loadRevisions, tripId])
 
   useEffect(() => {
     void load()
   }, [load])
 
   const itemPositions = useMemo(() => (document ? positions(document) : []), [document])
+  const lockedItemIds = useMemo(
+    () =>
+      new Set(
+        document?.itinerary.days.flatMap((day) =>
+          PERIODS.flatMap((period) =>
+            day[period]
+              .filter((item) => item.locked)
+              .map((item) => item.itemId ?? item.candidateId)
+          )
+        ) ?? []
+      ),
+    [document]
+  )
 
   const mutate = useCallback(async (
     endpoint: string,
@@ -289,6 +332,7 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
       })
       const next = await readResponse<ItineraryEditorDocument>(response)
       setDocument(next)
+      void loadRevisions()
       setSaveState('saved')
       setSaveMessage('Changes saved')
       window.setTimeout(() => setSaveState((current) => current === 'saved' ? 'idle' : current), 1800)
@@ -302,7 +346,7 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
         setSaveMessage(error instanceof Error ? error.message : 'Update failed.')
       }
     }
-  }, [document, saveState])
+  }, [document, loadRevisions, saveState])
 
   const reorder = useCallback((itemId: string, target: Omit<ItemPosition, 'itemId'>) => {
     void mutate(
@@ -380,6 +424,7 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
       } else {
         setFallbackDay(null)
         setDocument(result.document)
+        void loadRevisions()
         setSaveState('saved')
         setSaveMessage('Day updated')
       }
@@ -392,7 +437,119 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
         setSaveMessage(error instanceof Error ? error.message : 'Day regeneration failed.')
       }
     }
-  }, [document, saveState, tripId])
+  }, [document, loadRevisions, saveState, tripId])
+
+  const openHistory = useCallback(async () => {
+    setHistoryOpen(true)
+    setPreview(null)
+    const nextRevisions = await loadRevisions()
+    if (nextRevisions[0]) {
+      setPreviewLoading(true)
+      try {
+        const response = await fetch(
+          API.tripItineraryRevision(tripId, nextRevisions[0].id),
+          { cache: 'no-store' }
+        )
+        setPreview(await readResponse<ItineraryRevisionPreview>(response))
+      } catch (error) {
+        setSaveState('error')
+        setSaveMessage(error instanceof Error ? error.message : 'Revision preview could not be loaded.')
+      } finally {
+        setPreviewLoading(false)
+      }
+    }
+  }, [loadRevisions, tripId])
+
+  const loadPreview = useCallback(async (revisionId: string) => {
+    setPreviewLoading(true)
+    try {
+      const response = await fetch(API.tripItineraryRevision(tripId, revisionId), {
+        cache: 'no-store',
+      })
+      setPreview(await readResponse<ItineraryRevisionPreview>(response))
+    } catch (error) {
+      setSaveState('error')
+      setSaveMessage(error instanceof Error ? error.message : 'Revision preview could not be loaded.')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [tripId])
+
+  const undo = useCallback(async () => {
+    if (!document || saveState === 'saving' || revisions.length === 0) return
+    setSaveState('saving')
+    setSaveMessage('Undoing last change...')
+    try {
+      const response = await fetch(API.tripItineraryUndo(tripId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: document.version }),
+      })
+      const result = await readResponse<{
+        state: 'restored' | 'empty'
+        document: ItineraryEditorDocument
+      }>(response)
+      setDocument(result.document)
+      await loadRevisions()
+      setSaveState('saved')
+      setSaveMessage(result.state === 'restored' ? 'Last change undone' : 'No change to undo')
+    } catch (error) {
+      if (error instanceof EditorRequestError && error.status === 409) {
+        setSaveState('conflict')
+        setSaveMessage('This itinerary changed in another session.')
+      } else {
+        setSaveState('error')
+        setSaveMessage(error instanceof Error ? error.message : 'Undo failed.')
+      }
+    }
+  }, [document, loadRevisions, revisions.length, saveState, tripId])
+
+  const restoreRevision = useCallback(async (revisionId: string) => {
+    if (!document || restoring || saveState === 'saving') return
+    setRestoring(true)
+    setSaveState('saving')
+    setSaveMessage('Restoring revision...')
+    try {
+      const response = await fetch(API.tripItineraryRevisionRestore(tripId, revisionId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: document.version }),
+      })
+      const next = await readResponse<ItineraryEditorDocument>(response)
+      setDocument(next)
+      const nextRevisions = await loadRevisions()
+      setPreview(null)
+      if (nextRevisions[0]) void loadPreview(nextRevisions[0].id)
+      setSaveState('saved')
+      setSaveMessage('Revision restored')
+    } catch (error) {
+      if (error instanceof EditorRequestError && error.status === 409) {
+        setSaveState('conflict')
+        setSaveMessage('This itinerary changed in another session.')
+      } else {
+        setSaveState('error')
+        setSaveMessage(error instanceof Error ? error.message : 'Revision restore failed.')
+      }
+    } finally {
+      setRestoring(false)
+    }
+  }, [document, loadPreview, loadRevisions, restoring, saveState, tripId])
+
+  useEffect(() => {
+    if (!document) return
+    if (selectedItemId && document.mapPoints.some((point) => point.itemId === selectedItemId)) return
+    setSelectedItemId(document.mapPoints[0]?.itemId ?? null)
+  }, [document, selectedItemId])
+
+  const selectFromMap = useCallback((itemId: string) => {
+    setSelectedItemId(itemId)
+    window.requestAnimationFrame(() => {
+      const element = window.document.getElementById(`itinerary-item-${itemId}`)
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      element?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
+      element?.focus({ preventScroll: true })
+    })
+  }, [])
 
   if (loadError) {
     return (
@@ -430,34 +587,65 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
       <ItineraryHeader itinerary={document.itinerary} destination={destination} />
       {travelContext && <TravelContextSummary context={travelContext} />}
       <ItineraryTimeline roadmap={document.itinerary.roadmap} />
-      <div className="space-y-5">
-        {document.itinerary.days.map((day) => (
-          <EditableDayCard
-            key={day.dayNumber}
-            day={day}
-            date={document.dayDates[day.dayNumber]}
-            notices={document.dayNotices[day.dayNumber] ?? []}
-            dayNumbers={dayNumbers}
-            disabled={saveState === 'saving' || saveState === 'conflict'}
-            onMove={move}
-            onMoveToDay={moveToDay}
-            onDropItem={reorder}
-            onLock={(itemId, locked) => void mutate(
-              API.tripItineraryLock(tripId),
-              'PUT',
-              { itemId, locked },
-              (current) => updateItemLocal(current, itemId, (item) => { item.locked = locked })
-            )}
-            onNotes={(itemId, notes) => void mutate(
-              API.tripItineraryNotes(tripId),
-              'PUT',
-              { itemId, notes },
-              (current) => updateItemLocal(current, itemId, (item) => { item.editorNotes = notes })
-            )}
-            onReplace={(itemId) => void openReplacements(itemId)}
-            onRegenerate={setConfirmDay}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-neutral-200 py-3">
+        <p className="text-sm text-neutral-600">Version {document.version} / {revisions.length} saved {revisions.length === 1 ? 'change' : 'changes'}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={revisions.length === 0 || saveState === 'saving' || saveState === 'conflict'}
+            onClick={() => void undo()}
+          >
+            <Undo2 className="h-4 w-4" aria-hidden="true" />
+            Undo last change
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => void openHistory()}>
+            <History className="h-4 w-4" aria-hidden="true" />
+            History
+          </Button>
+        </div>
+      </div>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.12fr)_minmax(340px,0.88fr)]">
+        <div className="min-w-0 space-y-5">
+          {document.itinerary.days.map((day) => (
+            <EditableDayCard
+              key={day.dayNumber}
+              day={day}
+              date={document.dayDates[day.dayNumber]}
+              notices={document.dayNotices[day.dayNumber] ?? []}
+              dayNumbers={dayNumbers}
+              disabled={saveState === 'saving' || saveState === 'conflict'}
+              selectedItemId={selectedItemId}
+              onSelectItem={setSelectedItemId}
+              onMove={move}
+              onMoveToDay={moveToDay}
+              onDropItem={reorder}
+              onLock={(itemId, locked) => void mutate(
+                API.tripItineraryLock(tripId),
+                'PUT',
+                { itemId, locked },
+                (current) => updateItemLocal(current, itemId, (item) => { item.locked = locked })
+              )}
+              onNotes={(itemId, notes) => void mutate(
+                API.tripItineraryNotes(tripId),
+                'PUT',
+                { itemId, notes },
+                (current) => updateItemLocal(current, itemId, (item) => { item.editorNotes = notes })
+              )}
+              onReplace={(itemId) => void openReplacements(itemId)}
+              onRegenerate={setConfirmDay}
+            />
+          ))}
+        </div>
+        <aside className="min-w-0 lg:sticky lg:top-4">
+          <ItineraryMap
+            points={document.mapPoints}
+            lockedItemIds={lockedItemIds}
+            selectedItemId={selectedItemId}
+            onSelectItem={selectFromMap}
           />
-        ))}
+        </aside>
       </div>
 
       {replacementItemId && (
@@ -515,6 +703,20 @@ export function ItineraryEditor({ tripId, destination }: ItineraryEditorProps) {
             </div>
           </div>
         </ModalShell>
+      )}
+
+      {historyOpen && (
+        <ItineraryHistoryDialog
+          current={document}
+          revisions={revisions}
+          loading={historyLoading}
+          preview={preview}
+          previewLoading={previewLoading}
+          restoring={restoring}
+          onPreview={(revisionId) => void loadPreview(revisionId)}
+          onRestore={(revisionId) => void restoreRevision(revisionId)}
+          onClose={() => setHistoryOpen(false)}
+        />
       )}
     </div>
   )

@@ -6,6 +6,15 @@ import { ItineraryEditor } from '../ItineraryEditor'
 
 import type { ItineraryEditorDocument, ItineraryItem } from '@/types/itinerary'
 
+const editorHarness = vi.hoisted(() => ({ map: vi.fn() }))
+
+vi.mock('../ItineraryMap', () => ({
+  ItineraryMap: (props: unknown) => {
+    editorHarness.map(props)
+    return <div data-testid="itinerary-map">Map</div>
+  },
+}))
+
 const A = 'ATTRACTION:11111111-1111-4111-8111-111111111111'
 const B = 'ATTRACTION:22222222-2222-4222-8222-222222222222'
 
@@ -91,6 +100,7 @@ function response(body: unknown, status = 200) {
 describe('ItineraryEditor', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    editorHarness.map.mockClear()
   })
 
   it('offers keyboard-friendly move controls and sends an exact versioned reorder', async () => {
@@ -101,7 +111,9 @@ describe('ItineraryEditor', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(response({ revisions: [] }))
       .mockResolvedValueOnce(response(reordered))
+      .mockResolvedValueOnce(response({ revisions: [] }))
     vi.stubGlobal('fetch', fetchMock)
     const user = userEvent.setup()
     render(<ItineraryEditor tripId="trip-1" destination="Bangkok" />)
@@ -109,8 +121,8 @@ describe('ItineraryEditor', () => {
     await screen.findByRole('heading', { name: 'Grand Palace' })
     await user.click(screen.getByRole('button', { name: 'Move Grand Palace down' }))
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    const request = fetchMock.mock.calls[1]
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    const request = fetchMock.mock.calls[2]
     expect(request[0]).toContain('/itinerary-editor/reorder')
     expect(JSON.parse(request[1].body)).toEqual({
       itemId: A,
@@ -126,6 +138,7 @@ describe('ItineraryEditor', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(response(editorDocument()))
+      .mockResolvedValueOnce(response({ revisions: [] }))
       .mockResolvedValueOnce(
         response(
           { error: 'This itinerary changed in another session.', code: 'ITINERARY_VERSION_CONFLICT' },
@@ -141,5 +154,109 @@ describe('ItineraryEditor', () => {
     expect(await screen.findByText('This itinerary changed in another session.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Lock Grand Palace' })).toBeInTheDocument()
+  })
+
+  it('undoes the latest change with the current edit version', async () => {
+    const restored = editorDocument()
+    restored.version = 3
+    const revision = {
+      id: 'revision-1',
+      revisionNumber: 1,
+      actionType: 'lock_item',
+      actionSummary: 'Locked Grand Palace',
+      editVersion: 1,
+      createdAt: '2026-08-07T01:00:00.000Z',
+      isRestorable: true,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(editorDocument()))
+      .mockResolvedValueOnce(response({ revisions: [revision] }))
+      .mockResolvedValueOnce(response({ state: 'restored', document: restored }))
+      .mockResolvedValueOnce(response({ revisions: [revision] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<ItineraryEditor tripId="trip-1" destination="Bangkok" />)
+
+    await user.click(await screen.findByRole('button', { name: 'Undo last change' }))
+
+    await screen.findByText('Last change undone')
+    const request = fetchMock.mock.calls[2]
+    expect(request[0]).toContain('/itinerary-editor/undo')
+    expect(JSON.parse(request[1].body)).toEqual({ expectedVersion: 2 })
+  })
+
+  it('refreshes map points after an explicitly confirmed revision restore', async () => {
+    const initial = editorDocument()
+    initial.mapPoints = [{
+      itemId: A,
+      candidateId: A,
+      dayNumber: 1,
+      orderIndex: 0,
+      title: 'Grand Palace',
+      latitude: 13.75,
+      longitude: 100.5,
+      category: 'culture',
+      areaGroup: null,
+    }]
+    const restored = editorDocument()
+    restored.version = 3
+    restored.mapPoints = [{
+      itemId: B,
+      candidateId: B,
+      dayNumber: 1,
+      orderIndex: 0,
+      title: 'Wat Pho',
+      latitude: 13.751,
+      longitude: 100.501,
+      category: 'culture',
+      areaGroup: null,
+    }]
+    const revision = {
+      id: 'revision-1',
+      revisionNumber: 1,
+      actionType: 'replace_item',
+      actionSummary: 'Replaced Wat Pho with Grand Palace',
+      editVersion: 1,
+      createdAt: '2026-08-07T01:00:00.000Z',
+      isRestorable: true,
+    }
+    const preview = {
+      ...revision,
+      dayCount: 1,
+      itemCount: 2,
+      lockedItemCount: 0,
+      days: [{
+        dayNumber: 1,
+        theme: 'Old Town',
+        items: [{ itemId: A, title: 'Grand Palace', category: 'culture', orderIndex: 0, locked: false, notes: null }],
+      }],
+      mapPoints: initial.mapPoints,
+    }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(response({ revisions: [revision] }))
+      .mockResolvedValueOnce(response({ revisions: [revision] }))
+      .mockResolvedValueOnce(response(preview))
+      .mockResolvedValueOnce(response(restored))
+      .mockResolvedValueOnce(response({ revisions: [revision] }))
+      .mockResolvedValueOnce(response(preview))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<ItineraryEditor tripId="trip-1" destination="Bangkok" />)
+
+    await user.click(await screen.findByRole('button', { name: 'History' }))
+    await user.click(await screen.findByRole('button', { name: 'Restore' }))
+    expect(screen.getByText(/Restoring this version will replace/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Restore revision' }))
+
+    await screen.findByText('Revision restored')
+    await waitFor(() => {
+      const latestProps = editorHarness.map.mock.calls.at(-1)?.[0] as {
+        points: ItineraryEditorDocument['mapPoints']
+      }
+      expect(latestProps.points[0].itemId).toBe(B)
+    })
   })
 })

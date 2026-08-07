@@ -31,6 +31,8 @@ interface EditableDayCardProps {
   notices: string[]
   dayNumbers: number[]
   disabled: boolean
+  selectedItemId: string | null
+  onSelectItem: (itemId: string) => void
   onMove: (itemId: string, direction: 'up' | 'down') => void
   onMoveToDay: (itemId: string, dayNumber: number) => void
   onDropItem: (itemId: string, target: ItemPosition) => void
@@ -61,23 +63,27 @@ function EditorItem({
   position,
   dayNumbers,
   disabled,
+  selected,
   onMove,
   onMoveToDay,
   onDropItem,
   onLock,
   onNotes,
   onReplace,
+  onSelectItem,
 }: {
   item: ItineraryItem
   position: ItemPosition
   dayNumbers: number[]
   disabled: boolean
+  selected: boolean
   onMove: EditableDayCardProps['onMove']
   onMoveToDay: EditableDayCardProps['onMoveToDay']
   onDropItem: EditableDayCardProps['onDropItem']
   onLock: EditableDayCardProps['onLock']
   onNotes: EditableDayCardProps['onNotes']
   onReplace: EditableDayCardProps['onReplace']
+  onSelectItem: EditableDayCardProps['onSelectItem']
 }) {
   const id = itemId(item)
   const [notes, setNotes] = useState(item.editorNotes ?? '')
@@ -85,6 +91,11 @@ function EditorItem({
 
   return (
     <li
+      id={`itinerary-item-${id}`}
+      tabIndex={0}
+      aria-current={selected ? 'location' : undefined}
+      onClick={() => onSelectItem(id)}
+      onFocus={() => onSelectItem(id)}
       draggable={!disabled}
       onDragStart={(event) => {
         event.dataTransfer.effectAllowed = 'move'
@@ -98,7 +109,8 @@ function EditorItem({
       }}
       className={cn(
         'group relative border border-neutral-200 bg-white p-4 shadow-sm transition-ui sm:p-5',
-        item.locked && 'border-atlas-100 bg-atlas-50/30'
+        item.locked && 'border-atlas-100 bg-atlas-50/30',
+        selected && 'border-primary-500 ring-2 ring-primary-100'
       )}
     >
       <div className="flex items-start gap-3">
@@ -240,6 +252,8 @@ export function EditableDayCard({
   notices,
   dayNumbers,
   disabled,
+  selectedItemId,
+  onSelectItem,
   onMove,
   onMoveToDay,
   onDropItem,
@@ -303,12 +317,14 @@ export function EditableDayCard({
                     position={{ dayNumber: day.dayNumber, period, index }}
                     dayNumbers={dayNumbers}
                     disabled={disabled}
+                    selected={selectedItemId === itemId(entry)}
                     onMove={onMove}
                     onMoveToDay={onMoveToDay}
                     onDropItem={onDropItem}
                     onLock={onLock}
                     onNotes={onNotes}
                     onReplace={onReplace}
+                    onSelectItem={onSelectItem}
                   />
                 ))}
               </ul>

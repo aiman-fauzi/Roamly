@@ -2,6 +2,77 @@
 @tailwind components;
 @tailwind utilities;
 
+.roamly-map-marker-shell {
+  background: transparent;
+  border: 0;
+}
+
+.roamly-map-marker {
+  align-items: center;
+  background: white;
+  border: 3px solid var(--marker-color);
+  border-radius: 999px 999px 999px 4px;
+  box-shadow: 0 6px 16px rgba(24, 23, 19, 0.22);
+  color: #181713;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: 38px;
+  justify-items: center;
+  line-height: 1;
+  position: relative;
+  transform: rotate(-45deg);
+  transition: opacity 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  width: 38px;
+}
+
+.roamly-map-marker > * {
+  transform: rotate(45deg);
+}
+
+.roamly-map-marker small {
+  color: #706a5d;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.roamly-map-marker strong {
+  font-size: 13px;
+}
+
+.roamly-map-marker i {
+  align-items: center;
+  background: #181713;
+  border: 2px solid white;
+  border-radius: 999px;
+  color: white;
+  display: flex;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 800;
+  height: 15px;
+  justify-content: center;
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  width: 15px;
+}
+
+.roamly-map-marker-shell.is-selected .roamly-map-marker {
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.92), 0 0 0 8px var(--marker-color), 0 8px 20px rgba(24, 23, 19, 0.28);
+  transform: rotate(-45deg) scale(1.14);
+}
+
+.roamly-map-marker-shell.is-muted .roamly-map-marker {
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roamly-map-marker {
+    transition: none;
+  }
+}
+
 @layer base {
   :root {
     --background: 42 31% 97%;

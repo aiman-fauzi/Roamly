@@ -93,6 +93,8 @@ Standalone itinerary generation uses a compact Gemini contract for production la
 
 Completed itineraries support versioned day-by-day editing. Reorder, lock, notes, replacement, and day-regeneration writes use owner-scoped optimistic concurrency. Replacement and regeneration payloads accept IDs only; names, coordinates, categories, images, durations, and known prices are rebuilt from the current active destination candidate set before one atomic itinerary write. See `docs/itinerary-editor.md`.
 
+Successful itinerary edits now create bounded pre-mutation revisions with owner-scoped undo and explicit restore. The editor also renders validated map points through a provider-neutral Leaflet adapter with synchronized numbered markers, day-order lines, a reduced-motion-aware walkthrough, and resilient tile failure states. See `docs/itinerary-revisions-and-map.md`.
+
 ## Run Locally
 
 ```bash
