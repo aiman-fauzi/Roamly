@@ -33,7 +33,8 @@ export async function PUT(request: Request, { params }: RouteContext) {
     const document = await new ItineraryEditorService().setLock(
       tripId,
       guard.userId,
-      parsed.data
+      parsed.data,
+      timing
     )
     return completeTimedResponse(NextResponse.json(document), timing, 'success')
   } catch (error) {

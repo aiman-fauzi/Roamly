@@ -1,39 +1,42 @@
 import { NextResponse } from 'next/server'
 
-import { editorErrorResponse } from '../editorRouteUtils'
+import { editorErrorResponse } from '../../../itinerary-editor/editorRouteUtils'
 
 import {
   completeTimedResponse,
   err,
   readJsonBody,
   requireAuthenticatedTrip,
-  type RouteContext,
 } from '@/app/api/trips/[tripId]/travelRouteUtils'
 import { RequestTiming } from '@/lib/observability/requestTiming'
-import { itineraryReorderSchema } from '@/lib/validations/itineraryEditorValidation'
-import { ItineraryEditorService } from '@/services/itinerary/itineraryEditorService'
+import { itineraryRevisionMutationSchema } from '@/lib/validations/itineraryEditorValidation'
+import { ItineraryRevisionService } from '@/services/itinerary/itineraryRevisionService'
 
+interface RevisionRouteContext {
+  params: Promise<{ tripId: string; revisionId: string }>
+}
 
-export async function PUT(request: Request, { params }: RouteContext) {
-  const timing = new RequestTiming('itinerary_editor_reorder')
-  const { tripId } = await params
+export async function POST(request: Request, { params }: RevisionRouteContext) {
+  const timing = new RequestTiming('itinerary_revision_restore')
+  const { tripId, revisionId } = await params
   const guard = await requireAuthenticatedTrip(tripId, timing)
   if ('response' in guard) return completeTimedResponse(guard.response, timing, 'error')
   const json = await readJsonBody(request)
   if ('response' in json) return completeTimedResponse(json.response, timing, 'error')
-  const parsed = itineraryReorderSchema.safeParse(json.body)
+  const parsed = itineraryRevisionMutationSchema.safeParse(json.body)
   if (!parsed.success) {
     return completeTimedResponse(
-      err('Reorder request is invalid.', 'VALIDATION_ERROR', 400, parsed.error.flatten()),
+      err('Restore request is invalid.', 'VALIDATION_ERROR', 400, parsed.error.flatten()),
       timing,
       'error'
     )
   }
   try {
-    const document = await new ItineraryEditorService().reorder(
+    const document = await new ItineraryRevisionService().restore(
       tripId,
       guard.userId,
-      parsed.data,
+      revisionId,
+      parsed.data.expectedVersion,
       timing
     )
     return completeTimedResponse(NextResponse.json(document), timing, 'success')

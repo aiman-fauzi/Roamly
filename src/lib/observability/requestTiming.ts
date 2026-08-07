@@ -15,6 +15,7 @@ export interface OperationMetric {
   cacheStatus: OperationCacheStatus
   errorCode: string | null
   runtimeState: RuntimeState
+  resultCount: number | null
 }
 
 export const TRAVEL_LATENCY_THRESHOLDS_MS = {
@@ -79,6 +80,7 @@ export class RequestTiming {
   private readonly region = operationRegion()
   private cacheStatus: OperationCacheStatus = 'not_applicable'
   private finished = false
+  private resultCount: number | null = null
 
   constructor(readonly operation: string, requestId: string = randomUUID()) {
     this.requestId = requestId
@@ -127,6 +129,10 @@ export class RequestTiming {
     if (precedence.indexOf(status) > precedence.indexOf(this.cacheStatus)) this.cacheStatus = status
   }
 
+  setResultCount(count: number): void {
+    if (Number.isInteger(count) && count >= 0) this.resultCount = count
+  }
+
   serverTiming(): string {
     const metrics = [...this.components.entries()].map(
       ([name, duration]) => `${safeMetricName(name)};dur=${duration}`
@@ -152,6 +158,7 @@ export class RequestTiming {
       cacheStatus: normalized.cacheStatus ?? this.cacheStatus,
       errorCode: normalized.errorCode ?? null,
       runtimeState: this.runtimeState,
+      resultCount: this.resultCount,
     })
   }
 
@@ -171,6 +178,7 @@ export class RequestTiming {
       cacheStatus: 'not_applicable',
       errorCode: failureCode,
       runtimeState: this.runtimeState,
+      resultCount: null,
     })
   }
 }

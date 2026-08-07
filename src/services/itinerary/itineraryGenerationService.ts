@@ -174,7 +174,12 @@ interface ItineraryGenerationDependencies {
   }) => Promise<ExchangeRateResult>
   generateItinerary?: (request: GenerateItineraryRequest) => Promise<GenerateItineraryResponse>
   resolveCandidateDiagnostics?: (candidateIds: string[]) => Promise<CandidateDiagnosticsById>
-  persistTrip?: (tripId: string, status: TripStatus, itineraryJson: object) => Promise<Trip>
+  persistTrip?: (
+    tripId: string,
+    status: TripStatus,
+    itineraryJson: object,
+    timing?: RequestTiming
+  ) => Promise<Trip>
 }
 
 export class ItineraryGenerationError extends Error {
@@ -799,7 +804,8 @@ export class ItineraryGenerationService {
         resultTrip = await this.dependencies.persistTrip(
           trip.id,
           TripStatus.COMPLETE,
-          validatedItinerary
+          validatedItinerary,
+          options.timing
         )
         summary.persisted = true
         summary.persistenceResult = 'REPLACED_TRIP_ITINERARY'

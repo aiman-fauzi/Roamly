@@ -209,10 +209,65 @@ describe('ItineraryEditorService', () => {
     })
 
     expect(result.version).toBe(3)
-    const saved = persistTrip.mock.calls[0][0].itinerary as Itinerary
+    const saved = persistTrip.mock.calls[0][0].nextItinerary as Itinerary
     expect(saved.days[0].morning).toHaveLength(0)
     expect(saved.days[1].evening.map((entry) => entry.itemId)).toEqual(['item-a'])
     expect(new Set(saved.days.flatMap((day) => [...day.morning, ...day.afternoon, ...day.evening]).map((entry) => entry.candidateId)).size).toBe(3)
+    expect(persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'move_item',
+      actionSummary: 'Moved Place 1111 from Day 1 to Day 2',
+      previousItinerary: expect.objectContaining({ title: 'Bangkok plan' }),
+    }))
+  })
+
+  it('records same-day reorder, lock, unlock, and note action metadata from server state', async () => {
+    const reordered = createService()
+    await reordered.service.reorder('trip-1', 'user-1', {
+      itemId: 'item-a',
+      targetDayNumber: 1,
+      targetPeriod: 'afternoon',
+      targetIndex: 1,
+      expectedVersion: 2,
+    })
+    expect(reordered.persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'reorder_item',
+      actionSummary: 'Reordered Place 1111 on Day 1',
+    }))
+
+    const locked = createService()
+    await locked.service.setLock('trip-1', 'user-1', {
+      itemId: 'item-a',
+      locked: true,
+      expectedVersion: 2,
+    })
+    expect(locked.persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'lock_item',
+      actionSummary: 'Locked Place 1111',
+    }))
+
+    const unlockedDocument = itinerary()
+    unlockedDocument.days[0].morning[0].locked = true
+    const unlocked = createService(unlockedDocument)
+    await unlocked.service.setLock('trip-1', 'user-1', {
+      itemId: 'item-a',
+      locked: false,
+      expectedVersion: 2,
+    })
+    expect(unlocked.persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'unlock_item',
+      actionSummary: 'Unlocked Place 1111',
+    }))
+
+    const notes = createService()
+    await notes.service.setNotes('trip-1', 'user-1', {
+      itemId: 'item-a',
+      notes: 'Meet at the east gate',
+      expectedVersion: 2,
+    })
+    expect(notes.persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'update_notes',
+      actionSummary: 'Updated notes for Place 1111',
+    }))
   })
 
   it('rejects a stale version before any persistence attempt', async () => {
@@ -263,7 +318,7 @@ describe('ItineraryEditorService', () => {
       expectedVersion: 2,
     })
 
-    const saved = persistTrip.mock.calls[0][0].itinerary as Itinerary
+    const saved = persistTrip.mock.calls[0][0].nextItinerary as Itinerary
     expect(saved.days[0].morning[0]).toMatchObject({
       itemId: 'item-a',
       candidateId: D,
@@ -272,6 +327,10 @@ describe('ItineraryEditorService', () => {
       replacedFromCandidateId: A,
       priceConfidence: 'PRICE_UNKNOWN',
     })
+    expect(persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'replace_item',
+      actionSummary: 'Replaced Place 1111 with Wat Arun',
+    }))
   })
 
   it('rejects a replacement that became inactive before the atomic write', async () => {
@@ -301,10 +360,14 @@ describe('ItineraryEditorService', () => {
     })
 
     expect(result.state).toBe('applied')
-    const saved = persistTrip.mock.calls[0][0].itinerary as Itinerary
+    const saved = persistTrip.mock.calls[0][0].nextItinerary as Itinerary
     expect(saved.days[0].morning[0]).toEqual(document.days[0].morning[0])
     expect(saved.days[0].afternoon[0]).toMatchObject({ candidateId: D, source: 'generated' })
     expect(saved.days[1]).toEqual(unchangedDay)
+    expect(persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'regenerate_day',
+      actionSummary: 'Regenerated Day 1',
+    }))
   })
 
   it('returns a deterministic fallback proposal without overwriting after Gemini failure', async () => {
@@ -319,6 +382,22 @@ describe('ItineraryEditorService', () => {
 
     expect(result).toMatchObject({ state: 'fallback_ready', version: 2 })
     expect(persistTrip).not.toHaveBeenCalled()
+  })
+
+  it('records an accepted deterministic fallback as its own revision action', async () => {
+    const { service, persistTrip } = createService()
+
+    const result = await service.regenerateDay('trip-1', 'user-1', {
+      dayNumber: 1,
+      expectedVersion: 2,
+      acceptFallback: true,
+    })
+
+    expect(result.state).toBe('applied')
+    expect(persistTrip).toHaveBeenCalledWith(expect.objectContaining({
+      actionType: 'apply_fallback_day',
+      actionSummary: 'Applied fallback plan to Day 1',
+    }))
   })
 
   it('protects the arrival window and proposes a timing-safe fallback without writing', async () => {

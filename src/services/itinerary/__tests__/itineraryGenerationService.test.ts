@@ -233,7 +233,8 @@ describe('ItineraryGenerationService', () => {
             ],
           }),
         ],
-      })
+      }),
+      undefined
     )
   })
 

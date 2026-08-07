@@ -154,24 +154,43 @@ model Profile {
 }
 
 model Trip {
-  id            String     @id @default(uuid())
-  userId        String
-  title         String     @db.VarChar(200)
-  status        TripStatus @default(DRAFT)
-  itineraryJson Json?
-  itineraryEditVersion Int @default(0)
+  id                   String     @id @default(uuid())
+  userId               String
+  title                String     @db.VarChar(200)
+  status               TripStatus @default(DRAFT)
+  itineraryJson        Json?
+  itineraryEditVersion Int        @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user             User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  preferenceSet    PreferenceSet?
-  travelProfile    TripTravelProfile?
-  flightSelections TripFlightSelection[]
-  hotelSelections  TripHotelSelection[]
-  budgetSnapshots  TripBudgetSnapshot[]
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferenceSet      PreferenceSet?
+  travelProfile      TripTravelProfile?
+  flightSelections   TripFlightSelection[]
+  hotelSelections    TripHotelSelection[]
+  budgetSnapshots    TripBudgetSnapshot[]
+  itineraryRevisions ItineraryRevision[]
 
   @@map("trips")
+}
+
+model ItineraryRevision {
+  id              String   @id @default(uuid())
+  tripId          String
+  revisionNumber  Int
+  editVersion     Int
+  actionType      String   @db.VarChar(40)
+  actionSummary   String   @db.VarChar(240)
+  itineraryJson   Json
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, revisionNumber])
+  @@index([tripId, createdAt])
+  @@map("itinerary_revisions")
 }
 
 model PreferenceSet {

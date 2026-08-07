@@ -91,6 +91,55 @@ export interface ItineraryMapPoint {
   areaGroup: string | null
 }
 
+export type ItineraryRevisionAction =
+  | 'reorder_item'
+  | 'move_item'
+  | 'lock_item'
+  | 'unlock_item'
+  | 'update_notes'
+  | 'replace_item'
+  | 'regenerate_day'
+  | 'apply_fallback_day'
+  | 'generate_itinerary'
+  | 'restore_revision'
+
+export interface ItineraryRevisionSummary {
+  id: string
+  revisionNumber: number
+  actionType: ItineraryRevisionAction
+  actionSummary: string
+  editVersion: number
+  createdAt: string
+  isRestorable: boolean
+}
+
+export interface ItineraryRevisionPreviewItem {
+  itemId: string
+  title: string
+  category: string
+  orderIndex: number
+  locked: boolean
+  notes: string | null
+}
+
+export interface ItineraryRevisionPreview {
+  id: string
+  revisionNumber: number
+  actionType: ItineraryRevisionAction
+  actionSummary: string
+  createdAt: string
+  isRestorable: boolean
+  dayCount: number
+  itemCount: number
+  lockedItemCount: number
+  days: Array<{
+    dayNumber: number
+    theme: string
+    items: ItineraryRevisionPreviewItem[]
+  }>
+  mapPoints: ItineraryMapPoint[]
+}
+
 export interface ItineraryEditorDocument {
   itineraryId: string
   version: number

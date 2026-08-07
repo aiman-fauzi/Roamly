@@ -63,7 +63,12 @@ describe('itinerary reorder route', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(editorMocks.reorder).toHaveBeenCalledWith('trip-1', 'user-1', validBody)
+    expect(editorMocks.reorder).toHaveBeenCalledWith(
+      'trip-1',
+      'user-1',
+      validBody,
+      expect.anything()
+    )
   })
 
   it('rejects malformed mutation bodies before the service', async () => {

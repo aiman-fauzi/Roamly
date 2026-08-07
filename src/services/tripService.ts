@@ -1,6 +1,8 @@
 import { TripStatus } from '@prisma/client'
 
 import { prisma } from '@/db/client'
+import type { RequestTiming } from '@/lib/observability/requestTiming'
+import { persistGeneratedItinerary } from '@/services/itinerary/itineraryRevisionPersistence'
 import type { Trip, TripWithPreferences, TripWithTravelProfile } from '@/types/trip'
 
 export { TripStatus }
@@ -91,16 +93,14 @@ export async function deleteTrip(tripId: string, userId: string): Promise<void> 
 export async function updateTripStatus(
   tripId: string,
   status: TripStatus,
-  itineraryJson?: object
+  itineraryJson?: object,
+  timing?: RequestTiming
 ): Promise<Trip> {
+  if (itineraryJson !== undefined) {
+    return persistGeneratedItinerary(tripId, status, itineraryJson, timing)
+  }
   return prisma.trip.update({
     where: { id: tripId },
-    data: {
-      status,
-      ...(itineraryJson !== undefined && {
-        itineraryJson,
-        itineraryEditVersion: { increment: 1 },
-      }),
-    },
+    data: { status },
   })
 }

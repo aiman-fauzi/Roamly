@@ -28,4 +28,10 @@ export const API = {
     `/api/trips/${tripId}/itinerary-editor/replacements`,
   tripItineraryRegenerateDay: (tripId: string) =>
     `/api/trips/${tripId}/itinerary-editor/regenerate-day`,
+  tripItineraryUndo: (tripId: string) => `/api/trips/${tripId}/itinerary-editor/undo`,
+  tripItineraryRevisions: (tripId: string) => `/api/trips/${tripId}/itinerary-revisions`,
+  tripItineraryRevision: (tripId: string, revisionId: string) =>
+    `/api/trips/${tripId}/itinerary-revisions/${revisionId}`,
+  tripItineraryRevisionRestore: (tripId: string, revisionId: string) =>
+    `/api/trips/${tripId}/itinerary-revisions/${revisionId}/restore`,
 } as const

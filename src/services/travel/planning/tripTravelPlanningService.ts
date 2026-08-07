@@ -144,7 +144,12 @@ interface TripTravelPlanningDependencies {
     selectedHotelSnapshotId?: string | null
   }) => Promise<TripBudgetSnapshotResponse>
   generateItinerary?: (request: GenerateItineraryRequest) => Promise<GenerateItineraryResponse>
-  persistTrip?: (tripId: string, status: TripStatus, itineraryJson: object) => Promise<Trip>
+  persistTrip?: (
+    tripId: string,
+    status: TripStatus,
+    itineraryJson: object,
+    timing?: RequestTiming
+  ) => Promise<Trip>
 }
 
 interface TripTravelPlanningDependencySet {
@@ -175,7 +180,12 @@ interface TripTravelPlanningDependencySet {
     selectedHotelSnapshotId?: string | null
   }) => Promise<TripBudgetSnapshotResponse>
   generateItinerary: (request: GenerateItineraryRequest) => Promise<GenerateItineraryResponse>
-  persistTrip: (tripId: string, status: TripStatus, itineraryJson: object) => Promise<Trip>
+  persistTrip: (
+    tripId: string,
+    status: TripStatus,
+    itineraryJson: object,
+    timing?: RequestTiming
+  ) => Promise<Trip>
 }
 
 export interface TripTravelPlanningOptions {
@@ -820,7 +830,8 @@ export class TripTravelPlanningService {
         resultTrip = await this.dependencies.persistTrip(
           prepared.trip.id,
           TripStatus.COMPLETE,
-          validatedItinerary
+          validatedItinerary,
+          options.timing
         )
         summary.persisted = true
       }

@@ -35,8 +35,15 @@ export const itineraryRegenerateDaySchema = z.object({
   acceptFallback: z.boolean().optional().default(false),
 })
 
+export const itineraryRevisionMutationSchema = z.object({
+  expectedVersion,
+})
+
 export type ItineraryReorderInput = z.infer<typeof itineraryReorderSchema>
 export type ItineraryLockInput = z.infer<typeof itineraryLockSchema>
 export type ItineraryNotesInput = z.infer<typeof itineraryNotesSchema>
 export type ItineraryReplaceInput = z.infer<typeof itineraryReplaceSchema>
 export type ItineraryRegenerateDayInput = z.infer<typeof itineraryRegenerateDaySchema>
+export type ItineraryRevisionMutationInput = z.infer<
+  typeof itineraryRevisionMutationSchema
+>

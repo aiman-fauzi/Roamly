@@ -3,6 +3,7 @@ import { z } from 'zod'
 
 import { GeminiProvider, GeminiProviderError } from '@/ai/providers/GeminiProvider'
 import { prisma } from '@/db/client'
+import { buildItineraryMapPoints } from '@/lib/maps/itineraryMapPoints'
 import type { RequestTiming } from '@/lib/observability/requestTiming'
 import type {
   ItineraryLockInput,
@@ -16,14 +17,19 @@ import {
   resolveDestinationCity,
 } from '@/services/destinations/destinationRetrievalService'
 import type { RankedDestinationCandidate } from '@/services/destinations/types'
+import {
+  persistItineraryMutation,
+  type PersistItineraryMutationInput,
+  type PersistItineraryMutationResult,
+} from '@/services/itinerary/itineraryRevisionPersistence'
 import type {
   DayPlan,
   Itinerary,
   ItineraryEditorDocument,
   ItineraryItem,
-  ItineraryMapPoint,
   ItineraryPeriod,
   ItineraryReplacementOption,
+  ItineraryRevisionAction,
 } from '@/types/itinerary'
 
 const CANDIDATE_ID = /^(ATTRACTION|RESTAURANT|HOTEL|ACTIVITY):([0-9a-f-]{36})$/i
@@ -63,11 +69,15 @@ interface DayCandidatePlanItem {
 interface ItineraryEditorDependencies {
   loadTrip?: (tripId: string, userId: string) => Promise<LoadedEditorTrip | null>
   persistTrip?: (input: {
-    tripId: string
-    userId: string
-    expectedVersion: number
-    itinerary: Itinerary
-  }) => Promise<boolean>
+    tripId: PersistItineraryMutationInput['tripId']
+    userId: PersistItineraryMutationInput['userId']
+    expectedVersion: PersistItineraryMutationInput['expectedVersion']
+    previousItinerary: PersistItineraryMutationInput['previousItinerary']
+    nextItinerary: PersistItineraryMutationInput['nextItinerary']
+    actionType: PersistItineraryMutationInput['actionType']
+    actionSummary: PersistItineraryMutationInput['actionSummary']
+    timing?: PersistItineraryMutationInput['timing']
+  }) => Promise<PersistItineraryMutationResult | boolean>
   retrieveCandidates?: (trip: LoadedEditorTrip) => Promise<RankedDestinationCandidate[]>
   findActiveCandidateIds?: (candidateIds: string[]) => Promise<Set<string>>
   loadCandidateImages?: (
@@ -259,45 +269,6 @@ function roadmapKind(item: ItineraryItem) {
   return 'other' as const
 }
 
-function mapPoints(itinerary: Itinerary): ItineraryMapPoint[] {
-  let orderIndex = 0
-  const context = (itinerary as Itinerary & { itineraryTravelContext?: unknown })
-    .itineraryTravelContext
-  const areaGroups = new Map<string, string>()
-  if (isRecord(context) && isRecord(context.planningPreview)) {
-    const recommendations = context.planningPreview.rankedRecommendations
-    if (Array.isArray(recommendations)) {
-      for (const recommendation of recommendations) {
-        if (
-          isRecord(recommendation) &&
-          typeof recommendation.candidateId === 'string' &&
-          typeof recommendation.areaGroup === 'string'
-        ) {
-          areaGroups.set(recommendation.candidateId, recommendation.areaGroup)
-        }
-      }
-    }
-  }
-  return allItems(itinerary).flatMap(({ day, item }) => {
-    if (item.latitude == null || item.longitude == null) return []
-    const currentOrder = orderIndex
-    orderIndex += 1
-    return [
-      {
-        itemId: item.itemId ?? item.candidateId,
-        candidateId: item.candidateId,
-        dayNumber: day.dayNumber,
-        orderIndex: currentOrder,
-        title: item.title,
-        latitude: item.latitude,
-        longitude: item.longitude,
-        category: item.category ?? item.sourceEntityType?.toLowerCase() ?? 'other',
-        areaGroup: item.areaGroup ?? areaGroups.get(item.candidateId) ?? null,
-      },
-    ]
-  })
-}
-
 function dateOnly(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
@@ -365,7 +336,7 @@ function editorDocument(
     itineraryId: trip.id,
     version,
     itinerary: normalized,
-    mapPoints: mapPoints(normalized),
+    mapPoints: buildItineraryMapPoints(normalized),
     dayDates: dayDates(trip, normalized),
     dayNotices: dayNotices(normalized),
   }
@@ -376,7 +347,9 @@ function candidateParts(candidateId: string) {
   return match ? { type: match[1].toUpperCase(), id: match[2] } : null
 }
 
-async function defaultFindActiveCandidateIds(candidateIds: string[]): Promise<Set<string>> {
+export async function findActiveItineraryCandidateIds(
+  candidateIds: string[]
+): Promise<Set<string>> {
   const grouped = new Map<string, string[]>()
   for (const candidateId of candidateIds) {
     const parsed = candidateParts(candidateId)
@@ -694,20 +667,10 @@ export class ItineraryEditorService {
             where: { id: tripId, userId },
             include: { preferenceSet: true, travelProfile: true },
           })),
-      persistTrip:
-        dependencies.persistTrip ??
-        (async ({ tripId, userId, expectedVersion, itinerary }) => {
-          const result = await prisma.trip.updateMany({
-            where: { id: tripId, userId, itineraryEditVersion: expectedVersion },
-            data: {
-              itineraryJson: itinerary as unknown as Prisma.InputJsonValue,
-              itineraryEditVersion: { increment: 1 },
-            },
-          })
-          return result.count === 1
-        }),
+      persistTrip: dependencies.persistTrip ?? persistItineraryMutation,
       retrieveCandidates: dependencies.retrieveCandidates ?? defaultRetrieveCandidates,
-      findActiveCandidateIds: dependencies.findActiveCandidateIds ?? defaultFindActiveCandidateIds,
+      findActiveCandidateIds:
+        dependencies.findActiveCandidateIds ?? findActiveItineraryCandidateIds,
       loadCandidateImages: dependencies.loadCandidateImages ?? defaultLoadCandidateImages,
       generateDayPlan: dependencies.generateDayPlan ?? defaultGenerateDayPlan,
     }
@@ -718,30 +681,64 @@ export class ItineraryEditorService {
     return editorDocument(trip, parseEditableItinerary(trip.itineraryJson))
   }
 
-  async reorder(tripId: string, userId: string, input: ItineraryReorderInput) {
+  async reorder(
+    tripId: string,
+    userId: string,
+    input: ItineraryReorderInput,
+    timing?: RequestTiming
+  ) {
     return this.mutate(tripId, userId, input.expectedVersion, (itinerary) => {
       const source = findItem(itinerary, input.itemId)
       const targetDay = itinerary.days.find((day) => day.dayNumber === input.targetDayNumber)
       if (!targetDay) throw new ItineraryEditorError('ITINERARY_DAY_NOT_FOUND', 'Day not found.', 404)
+      const sourceDayNumber = source.day.dayNumber
+      const title = source.item.title
       source.day[source.period].splice(source.index, 1)
       const target = targetDay[input.targetPeriod]
       target.splice(Math.min(input.targetIndex, target.length), 0, source.item)
-      return itinerary
-    })
+      return {
+        itinerary,
+        actionType: sourceDayNumber === targetDay.dayNumber ? 'reorder_item' : 'move_item',
+        actionSummary:
+          sourceDayNumber === targetDay.dayNumber
+            ? `Reordered ${title} on Day ${sourceDayNumber}`
+            : `Moved ${title} from Day ${sourceDayNumber} to Day ${targetDay.dayNumber}`,
+      }
+    }, timing)
   }
 
-  async setLock(tripId: string, userId: string, input: ItineraryLockInput) {
+  async setLock(
+    tripId: string,
+    userId: string,
+    input: ItineraryLockInput,
+    timing?: RequestTiming
+  ) {
     return this.mutate(tripId, userId, input.expectedVersion, (itinerary) => {
-      findItem(itinerary, input.itemId).item.locked = input.locked
-      return itinerary
-    })
+      const item = findItem(itinerary, input.itemId).item
+      item.locked = input.locked
+      return {
+        itinerary,
+        actionType: input.locked ? 'lock_item' : 'unlock_item',
+        actionSummary: `${input.locked ? 'Locked' : 'Unlocked'} ${item.title}`,
+      }
+    }, timing)
   }
 
-  async setNotes(tripId: string, userId: string, input: ItineraryNotesInput) {
+  async setNotes(
+    tripId: string,
+    userId: string,
+    input: ItineraryNotesInput,
+    timing?: RequestTiming
+  ) {
     return this.mutate(tripId, userId, input.expectedVersion, (itinerary) => {
-      findItem(itinerary, input.itemId).item.editorNotes = input.notes
-      return itinerary
-    })
+      const item = findItem(itinerary, input.itemId).item
+      item.editorNotes = input.notes
+      return {
+        itinerary,
+        actionType: 'update_notes',
+        actionSummary: `Updated notes for ${item.title}`,
+      }
+    }, timing)
   }
 
   async replacementOptions(
@@ -787,6 +784,7 @@ export class ItineraryEditorService {
     const trip = await this.requireTrip(tripId, userId)
     this.assertVersion(trip, input.expectedVersion)
     const itinerary = parseEditableItinerary(trip.itineraryJson)
+    const previous = structuredClone(itinerary)
     const match = findItem(itinerary, input.itemId)
     const candidates = await this.retrieve(trip, timing)
     const used = new Set(allItems(itinerary).map(({ item }) => item.candidateId))
@@ -814,7 +812,14 @@ export class ItineraryEditorService {
       reason: optionReason(selected, match.item),
       image: images.get(selected.candidateId),
     })
-    return this.persist(trip, itinerary)
+    return this.persist(
+      trip,
+      previous,
+      itinerary,
+      'replace_item',
+      `Replaced ${match.item.title} with ${selected.name}`,
+      timing
+    )
   }
 
   async regenerateDay(
@@ -826,6 +831,7 @@ export class ItineraryEditorService {
     const trip = await this.requireTrip(tripId, userId)
     this.assertVersion(trip, input.expectedVersion)
     const itinerary = parseEditableItinerary(trip.itineraryJson)
+    const previous = structuredClone(itinerary)
     const day = itinerary.days.find((candidate) => candidate.dayNumber === input.dayNumber)
     if (!day) throw new ItineraryEditorError('ITINERARY_DAY_NOT_FOUND', 'Day not found.', 404)
     const usedOutsideDay = new Set(
@@ -894,7 +900,19 @@ export class ItineraryEditorService {
       day.dayNumber
     )
     const next = this.applyDayPlan(itinerary, day, plan, candidates, source)
-    return { state: 'applied', document: await this.persist(trip, next) }
+    return {
+      state: 'applied',
+      document: await this.persist(
+        trip,
+        previous,
+        next,
+        source === 'fallback' ? 'apply_fallback_day' : 'regenerate_day',
+        source === 'fallback'
+          ? `Applied fallback plan to Day ${day.dayNumber}`
+          : `Regenerated Day ${day.dayNumber}`,
+        timing
+      ),
+    }
   }
 
   private applyDayPlan(
@@ -986,17 +1004,36 @@ export class ItineraryEditorService {
     tripId: string,
     userId: string,
     expectedVersion: number,
-    transform: (itinerary: Itinerary) => Itinerary
+    transform: (itinerary: Itinerary) => {
+      itinerary: Itinerary
+      actionType: ItineraryRevisionAction
+      actionSummary: string
+    },
+    timing?: RequestTiming
   ) {
     const trip = await this.requireTrip(tripId, userId)
     this.assertVersion(trip, expectedVersion)
     const previous = parseEditableItinerary(trip.itineraryJson)
-    const next = transform(structuredClone(previous))
-    assertDocumentIntegrity(next)
-    return this.persist(trip, recalculateItinerary(previous, next))
+    const mutation = transform(structuredClone(previous))
+    assertDocumentIntegrity(mutation.itinerary)
+    return this.persist(
+      trip,
+      previous,
+      recalculateItinerary(previous, mutation.itinerary),
+      mutation.actionType,
+      mutation.actionSummary,
+      timing
+    )
   }
 
-  private async persist(trip: LoadedEditorTrip, itinerary: Itinerary) {
+  private async persist(
+    trip: LoadedEditorTrip,
+    previousItinerary: Itinerary,
+    itinerary: Itinerary,
+    actionType: ItineraryRevisionAction,
+    actionSummary: string,
+    timing?: RequestTiming
+  ) {
     assertDocumentIntegrity(itinerary)
     const candidateIds = allItems(itinerary).map(({ item }) => item.candidateId)
     const active = await this.dependencies.findActiveCandidateIds(candidateIds)
@@ -1009,12 +1046,18 @@ export class ItineraryEditorService {
         { count: inactive.length }
       )
     }
-    const updated = await this.dependencies.persistTrip({
+    const persistence = await this.dependencies.persistTrip({
       tripId: trip.id,
       userId: trip.userId,
       expectedVersion: trip.itineraryEditVersion,
-      itinerary,
+      previousItinerary,
+      nextItinerary: itinerary,
+      actionType,
+      actionSummary,
+      timing,
     })
+    const updated = typeof persistence === 'boolean' ? persistence : persistence.updated
+    if (typeof persistence !== 'boolean') timing?.setResultCount(persistence.revisionCount)
     if (!updated) {
       throw new ItineraryEditorError(
         'ITINERARY_VERSION_CONFLICT',
